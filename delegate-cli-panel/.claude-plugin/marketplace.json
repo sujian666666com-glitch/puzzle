@@ -1,0 +1,5 @@
+{
+  "name": "delegate-cli-panel",
+  "owner": { "name": "local" },
+  "plugins": [{ "name": "delegate-cli-panel", "source": "./" }]
+}

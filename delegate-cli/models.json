@@ -1,0 +1,30 @@
+{
+  "_comment": "run_cli.py 读取：默认模型、简称与中文思考强度映射。启动前会用各 CLI 自带的模型列表校验解析结果；改这里即可调整“老样子”。",
+  "defaults": {
+    "cursor": {"model": "grok-4.7-medium"}
+  },
+  "aliases": {
+    "codex": {
+      "astra": "gpt-6-astra",
+      "sol": "gpt-6.1-sol",
+      "terra": "gpt-6.1-terra",
+      "luna": "gpt-6-luna"
+    },
+    "pi": {
+      "flash": "deepseek/deepseek-flash",
+      "deepseek": "deepseek/deepseek-flash"
+    },
+    "cursor": {
+      "grok": "grok-4.7-medium",
+      "grok4.7": "grok-4.7-medium",
+      "composer": "composer-2.5"
+    }
+  },
+  "thinking": {
+    "低": "low",
+    "中": "medium",
+    "高": "high",
+    "超高": "xhigh",
+    "最高": "max"
+  }
+}

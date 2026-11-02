@@ -1,0 +1,6 @@
+{
+  "name": "delegate-cli-panel",
+  "version": "0.2.1",
+  "description": "子 Agent 面板：列出 delegate-cli 派发的 Codex/Pi/Cursor 运行，点进去看结果与实时过程",
+  "types": "./types/index.d.ts"
+}
