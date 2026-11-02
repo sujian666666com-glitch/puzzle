@@ -26,6 +26,8 @@ codex exec --sandbox workspace-write -c 'approval_policy="never"' \
 
 ## 能力与边界
 
+`exec --json` 没有思考增量，也没有逐字片段：面板的 `activity` 只在工具执行（`tool`）与等待模型（`waiting`）之间切换，`live_text` 恒为空。
+
 Codex 可使用仓库规则、Skills、已配置 MCP、图像输入以及其环境允许的工具；模型和客户端配置决定实际可用项。脚本仅封装常规文字任务；需传图、指定输出 JSON Schema 或调用 review 时，核对本机帮助后直接使用原生命令，并沿用任务隔离、日志和验收要求。
 
 当前文档已移除 `--full-auto` 和 `codex mcp-server`。不要照旧教程把它注册成 Claude 的 MCP server。需要长连接、过程事件、审批交互和中途控制时，评估 [Codex app-server](https://developers.openai.com/codex/app-server)；普通 Skill 默认用 exec。

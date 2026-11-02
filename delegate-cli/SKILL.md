@@ -62,16 +62,17 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" doctor --cwd "/绝对/项目路
 python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" run \
   --agent codex --cwd "/绝对/项目或worktree" \
   --prompt-file "/绝对/任务文件.md" --access write \
-  --model astra --thinking 中
+  --title "审查 runner 改动" --model astra --thinking 中
 ```
 
 `--agent` 取 `codex`、`pi`、`cursor`；`--access read|write`。任务文件必须已存在。
 
+- **任务名**：每次派发都传 `--title`，10～20 字说清做什么（如“审查 runner 改动”“补面板停止按钮”）。它就是面板卡片标题和后台任务名，不传时取交接里「目标：」那一行。
 - **模型**：用户说的简称原样传，脚本按 skill 根目录的 `models.json` 解析，并在启动前用 CLI 自带的模型列表校验（`astra`→`gpt-6-astra`，`flash`→`deepseek/deepseek-flash`，`grok4.7`+`中`→`grok-4.7-medium`）。写错会立即 `blocked` 并给出候选，不会白跑。不传时用 `models.json` 的 `defaults`（目前只给 Cursor 配了 `grok-4.7-medium`），再没有就用 CLI 自己配置的默认模型；用户的"老样子"写进 `models.json`，三家都生效。Cursor 的思考档按同一模型族换档（没有的档位会报错并列出可用档），带方括号参数的 ID 原样放行。
 - **Cursor**：read 用 `--mode ask`，write 用 `--force`（执行命令，且隐含信任目录）。只读任务遇到未信任目录会 `blocked`；只有用户授权信任该目录时才加 `--cursor-trust approved`。
 - **Pi**：read 只选读取工具并在支持时关闭内置 MCP，保留扩展；尚未信任的项目资源用 `--pi-trust existing|skip|approved`（默认沿用已有信任；`skip` 对应 `--no-approve`，`approved` 对应一次性 `--approve`）。
 - **非 Git 目录**：Codex 默认拒绝；确属预期时加 `--skip-git-check`（只对 Codex 有效，用在其他 Agent 上会直接报错）。
-- 每次运行生成独立目录（默认 `~/.claude/cli-runs/`，`--run-root` 可改），保留 `task.md`、`run.json`、`result.md`、`stderr.log`、`progress.log` 和 CLI 帮助（解析过模型时另存 `models.txt`）；Codex/Cursor 另存 `events.jsonl`，Pi 保留会话文件。不要把日志提交进业务仓库。
+- 每次运行生成独立目录（默认 `~/.claude/cli-runs/`，`--run-root` 可改），保留 `task.md`、`handoff.md`、`run.json`、`result.md`、`stderr.log`、`progress.log` 和 CLI 帮助（解析过模型时另存 `models.txt`）；Codex/Cursor 另存 `events.jsonl`，Pi 保留会话文件。不要把日志提交进业务仓库。
 
 续接时给出该任务完成后的精确 `run.json`，Agent 和工作目录必须相同：
 
@@ -86,8 +87,9 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" run \
 
 ## 5. 让用户看见进度
 
-- 用后台 Bash 派发，并写清楚它的 description（如“Cursor：审查 runner 改动”）。桌面 App 右侧的 Background tasks 按 description 列出任务，点进去就是 runner 的实时输出：首行 JSON（`run_file`、`watch_command`），中间逐行进度，末行最终 JSON。
-- 派发后用一句话告诉用户去 Background tasks 看，并附上 `watch_command` 方便终端跟随。命令用本次真实路径，不硬编码用户名或项目名。装了 `delegate-cli-panel` 插件时，底部状态栏会显示运行中的子 Agent，`/delegate-runs` 打开列表与实时日志面板（pane 是否显示由 App 决定）。
+- 用后台 Bash 派发，description 写成「Agent：任务名」，任务名与 `--title` 相同（如“Cursor：审查 runner 改动”）：Background tasks 按它列出任务。点进去是 runner 的实时输出：首行 JSON（`run_file`、`watch_command`），接着「── 任务：<任务名> ──」和交接全文（不含 runner 附注），然后逐行进度，末行最终 JSON。
+- 派发后在对话里贴一张派发卡片：一张小表，列出任务名、Agent、模型、读写、工作目录、完成标准；不贴交接全文（全文在面板「任务」页和 Background tasks 开头）。再附一句提示和 `watch_command` 方便终端跟随，命令用本次真实路径，不硬编码用户名或项目名。
+- 装了 `delegate-cli-panel` 插件时，底部状态栏显示运行中的子 Agent，`/delegate-runs` 打开面板（pane 是否显示由 App 决定）。卡片以任务名命名，副信息是 Agent · 模型 · 读写 · 派发时刻 · 耗时 · token；详情分「任务 / 过程 / 结果」三页。运行中底部有实时状态行（正在思考 / 正在执行 xx / 正在写回复 / 等待模型 + 秒数；只有 Cursor 有思考与逐字事件，Codex 和 Pi 只在执行工具与等待模型之间切换），Cursor 正在写的回复以“输入中”气泡逐字出现；可用「停止」「追问」处理跑偏或需要补要求的运行。
 - 后台 Bash 结束时 Claude 会收到完成通知：等通知再收结果，不要轮询，也不要整份读取后台输出（那是给人看的进度流）。最终状态读 `run.json`，或只取输出的最后一行；确需中途判断时用 `watch --once` 读一次快照。前台短任务可加 `--quiet`，只输出首尾两行 JSON。
 - `progress.log` 展示工具调用（每次一行；失败、退出码非 0、超过 3 秒的另记结果）、文件改动、Agent 消息、错误、会话 ID 和最终用量。无日志 60 秒会提示安静时长，不能据此判定卡死或自动重试。runner 每分钟至少写一次心跳，面板把超过 3 分钟没写日志的 running 运行标为"可能已中断"（runner 可能被强杀），需核实进程。面板只扫描默认目录 `~/.claude/cli-runs/` 里最近 7 天的运行；用 `--run-root` 改了目录的运行只能用 `watch` 看。
 - 默认日志不含私有推理。不要擅自启动终端窗口。
@@ -97,7 +99,8 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" run \
 - 等后台任务真正结束，再读 `run.json` 和 `result.md`。先读摘要；需要定位问题时再检索日志，避免整份事件流挤进主控上下文。
 - `process_succeeded` 只表示 CLI 正常完成，`verified: false` 要由主控实际检查。审查 diff、核实文件范围并运行所需集成/端到端验证后，才能报告任务完成。
 - `blocked`、`failed`、`timed_out`、`cancelled`、`planned`（dry-run）都不能当作成功。`blocked` 的 `error` 是前置条件提示（模型、目录信任、非 Git、锁冲突），`error_detail` 保留 CLI 原文；`failed` 的 `error` 是 CLI 给出的真实原因。启动前的校验失败（模型名、`models.json`、CLI 不可用）只输出一行 blocked JSON，不建运行目录。先区分参数/版本、模型、认证/额度、网络、沙箱、项目配置和代码问题。
-- 对临时网络问题，先检查已有改动和进程状态，再续接原会话；不要盲目重跑写入任务。保留有用产物。
+- 对临时网络问题，先检查已有改动和进程状态，再续接原会话；不要盲目重跑写入任务。保留有用产物。用户在面板里停止的运行是 `cancelled`，同样不算成功：先看已经产生的改动，再决定续接还是重派。
+- 用户说“用 delegate-cli 续接这次运行（<运行目录名>）：<要求>”时，读 `~/.claude/cli-runs/<运行目录名>/run.json`，把要求写成新的任务文件，用同一 Agent、同一 `cwd` 和 `--resume-from` 续接。
 - 超时默认 1800 秒，可用 `--timeout` 调整。Claude 自身的后台时限也可能先触发；不能凭"文件存在"判断完成。脚本会尝试终止自己的进程组；若被强杀，需核实是否仍有工作在运行。
 - 同一目录可并行多个只读任务，写入任务独占该目录；同一续接会话也只能有一个任务。主控的操作不受该锁约束。被锁阻挡时串行执行，或换独立 worktree/会话。
 - 不通过禁用审批、放开全盘权限、删除规则或关闭保护扩展来修复被拒绝的任务。Codex 的 never 策略保留沙箱，并使需要升级权限的操作失败。

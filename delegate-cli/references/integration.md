@@ -31,18 +31,23 @@
 
 传了 `--model`（Cursor 总是）时，脚本先按 `models.json` 解析简称和中文思考强度，再用 `codex debug models`、`pi --list-models`、`cursor-agent models` 校验；列表取不到时只做别名替换，并在 `run.json` 的 `model_check` 里写明。结果另记 `claude_session_id`（派发它的 Claude 会话，面板据此筛选）、`usage`（token 用量）和 `watch_command`。
 
+`run.json` 还记 `title`（任务名，来自 `--title`，不传时取「目标：」行，超过 40 字截断）、`goal`（交接里的「目标：」行）、`handoff_file`（交接原文 `handoff.md` 的绝对路径）、`activity`（`{kind: thinking|tool|writing|waiting, label, since}`，结束置 null）和 `live_text`（Cursor 尚未成段的逐字文本，其他 Agent 恒为 `""`）。运行目录里 `task.md` 是实际发送给 CLI 的全文（前面有 runner 加的两段说明），`handoff.md` 是主控写的交接原文，不要混用。
+
 脚本保留进程退出状态、会话指针和结果；不会自动做 Git 合并、安装依赖、提交或部署。这些决定留给掌握上下文的 Claude。结果里的 `verified` 始终为 false，避免把外部 Agent 的“完成”当成主控验收。
 
 第一次实际使用时，先以小范围只读任务验证认证、模型和工作目录，再执行真实开发任务。若本机版本不支持当前封装参数，依据本机帮助做兼容调整；禁止通过绕过权限/规则来制造成功。
 
 ## 进度面板（delegate-cli-panel）
 
-`panel/` 是一个 Claude Code 函数钩子 mod：在桌面 App 对话右侧停靠一个「子 Agent」pane，定时读取 `~/.claude/cli-runs/*/run.json` 与 `progress.log`（有运行中任务或打开某个运行时每 2 秒，空闲约 10 秒）。
+`panel/` 是一个 Claude Code 函数钩子 mod：在桌面 App 对话右侧停靠一个「子 Agent」pane，定时读取 `~/.claude/cli-runs/*/run.json` 与 `progress.log`（打开运行中的运行时每 1 秒，有运行中任务 2 秒，空闲约 10 秒）。
 
-- 只扫描默认目录 `~/.claude/cli-runs/` 里最近 7 天的运行（`--run-root` 改过目录的看不到）。默认列出本会话派发的运行（按 `claude_session_id` 匹配），可切到“近 24 小时”；每行显示状态、模型、读写、耗时、token 和最新一行进度。
-- 点一行进入实时日志，可复制 `watch` 命令；超过 3 分钟没写日志的 running/preparing 运行标为“可能已中断”。
+- 只扫描默认目录 `~/.claude/cli-runs/` 里最近 7 天的运行（`--run-root` 改过目录的看不到）。默认列出本会话派发的运行（按 `claude_session_id` 匹配），可切到“近 24 小时”（按 `cwd` 最后一段分组）；运行中的排最前，其余按时间倒序。
+- 卡片以 `title` 命名（旧记录回退到交接里的「目标：」行），副信息是 Agent · 模型(/思考档) · 只读|可写 · 派发时刻 · 耗时 · token，失败的显示原因。
+- 点卡片进详情，分「任务 / 过程 / 结果」三页：「任务」渲染 `handoff.md`（旧记录用 `task.md` 去掉 runner 说明）。「过程」是实时日志，Agent 的话用 Markdown，工具调用压成一行；运行中底部有实时状态行（`activity`：正在思考 / 正在执行 xx / 正在写回复 / 等待模型 + 秒数），Cursor 的 `live_text` 以“输入中”气泡逐字出现。可复制 `watch` 命令。
+- 运行中可「停止」（先变成“确认停止”，再校验 `runner_pid` 是 `run_cli.py` 后发 SIGTERM，状态由 runner 记为 `cancelled`）和「追问」（把“用 delegate-cli 续接这次运行（<运行目录名>）：”填进输入框）。
+- 超过 3 分钟没写日志的 running/preparing 运行标为“可能已中断”。
 - 本会话有新运行启动时尝试打开 pane，底部状态栏同时显示“子 Agent 运行中”。定时器发起的打开属于“非主动请求”，界面不够宽时 App 会先挂起不显示，此时状态栏会提示 `/delegate-runs`；该命令是主动请求，打不开时会直接报出 App 给的原因。pane 由 App 决定落位，mod 不能插进 App 内置的会话信息列表。
-- 只读文件，不调用模型、不改运行记录。旧版 runner 产生的记录没有 `claude_session_id`，只在“近 24 小时”里出现。
+- 除「停止」向 runner 发 SIGTERM 外不改变任何状态：不调用模型、不改运行记录。旧版 runner 产生的记录没有 `claude_session_id`，只在“近 24 小时”里出现。
 
 安装方式见 `panel/README.md`。CLI 使用的 MCP 和桌面端内置插件不是自动共享关系，面板与 GUI 验收互不依赖。
 

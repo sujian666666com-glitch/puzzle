@@ -33,12 +33,13 @@ MCP 服务器在无头模式下需要 `--approve-mcps` 才会自动启用；脚�
 | type | 用途 |
 |---|---|
 | `system` / `init` | `session_id`（即 chatId，续接用）、模型显示名 |
-| `assistant` | 一段完整的回复文本（工具调用之间分段） |
+| `assistant` | 回复文本；带 `--stream-partial-output` 时同一段会先来若干逐字片段，再来整段，见下文 |
 | `tool_call` started/completed | `readToolCall`、`shellToolCall`、`editToolCall` 等；结果在 `result.success`，shell 带 `exitCode` |
-| `thinking` | 推理增量，脚本不展示 |
+| `thinking` | 推理增量/delta 与完成的 completed，只用于把 `activity` 切成 thinking，文本不展示 |
 | `result` | `subtype: success`、`is_error`、`usage`（`inputTokens/outputTokens/cacheReadTokens/cacheWriteTokens`） |
 
-- `result.result` 会把所有分段拼在一起（含"我先读一下…"之类的过程话）；脚本把**最后一段** assistant 文本写进 `result.md`，与 Codex 的 last message 对齐。
+- 脚本固定加 `--stream-partial-output`，所以 `assistant` 事件分两种：带 `timestamp_ms` 且没有 `model_call_id` 的是逐字片段；带 `model_call_id`、或两者都没有的是整段。片段只累加进 `run.json` 的 `live_text`（面板据此显示“输入中”气泡），整段到达时清空；`progress.log` 每整段一行，`result.md` 取最后一个整段。
+- `result.result` 把所有分段拼在一起（含“我先读一下…”之类的过程话），因此不采用它，取最后一段与 Codex 的 last message 对齐。
 - 成功判定：退出码 0、出现 `result` 且 `is_error` 为 false、`result.md` 非空。失败时看 `stderr.log`。
 - 用量换算：`input_tokens = inputTokens + cacheReadTokens + cacheWriteTokens`，与 Codex 的口径一致。
 

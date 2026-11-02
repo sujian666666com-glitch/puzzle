@@ -34,6 +34,6 @@ Pi 没有默认操作系统沙箱。工具筛选、cwd、项目 trust 和 worktr
 
 print 的 error、aborted、输出长度截断会以非零状态结束，仍可能留有部分文本。JSON 模式的模型错误未必导致进程非零；检查最终 assistant `message_end.message.stopReason` 与 `errorMessage`。新版本 `agent_settled` 表示自动重试/后续工作结束；`agent_end` 可能还会重试。不要把工具调用消息、增量 token 或低层 agent_end 当最终成功。[JSON events](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/json.md)
 
-封装脚本从会话文件里本次新增的 assistant 消息累加 `usage`（含 `cost.total` 美元成本），写进 `run.json`。
+封装脚本从会话文件里本次新增的 assistant 消息累加 `usage`（含 `cost.total` 美元成本），写进 `run.json`。Pi 同样没有思考事件和逐字片段：面板的 `activity` 只在工具执行（`tool`）与等待（`waiting`）之间切换，`live_text` 恒为空。
 
 需要实时双向交互时再用 [RPC](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md)。CLI 子任务本身通常只需“发任务—等结束—读结果—明确续接”。
