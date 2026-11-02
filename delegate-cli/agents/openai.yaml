@@ -1,0 +1,13 @@
+interface:
+  display_name: Claude CLI 调度
+  short_description: 让 Claude 调用 Codex、Pi 与 Cursor，追踪进度、续接会话并完成代码与界面验收
+  default_prompt: 使用 $delegate-cli 为当前任务选择 Codex、Pi 或 Cursor，执行并验证结果。
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true
