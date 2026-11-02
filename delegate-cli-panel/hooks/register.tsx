@@ -1,12 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { RunDetail, RunRow } from '../types'
+import type { RunActivity, RunDetail, RunRow } from '../types'
 
-const VERSION = '0.2.1'
+const VERSION = '0.3.0'
 const PANE = 'delegate-agents'
 const TITLE = '子 Agent'
-const TICK_MS = 2000
+// One second, so an open live run can tick its status line. Other gaps skip ticks.
+const TICK_MS = 1000
+const LIVE_MS = 2000
 // Rescan for new runs this often while nothing runs and no run is open.
 const IDLE_MS = 10000
 // The runner writes progress.log at least once a minute while it is alive.
@@ -14,6 +16,9 @@ const STALE_MS = 180000
 const WINDOW_MS = 7 * 86400000
 const RECENT_MS = 86400000
 const RESULT_CHARS = 8000
+const TITLE_CHARS = 40
+const STOP_MS = 5000
+const TASK_NOTE = '发送时另附 runner 说明 2 条（记录会话 ID、禁止递归调用其他 AI）'
 const RUN_DIR = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-(codex|pi|cursor)-/
 const LINE = /^(\d\d:\d\d:\d\d) (\S+)(?: (.*))?$/
 const ACTIVE = new Set(['running', 'preparing'])
@@ -51,13 +56,14 @@ type Entry =
 
 // Change a tag when that value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
-const runs = atom({ plugin: 'delegate-cli-panel', key: 'runs' } as const, [], { shape: 'runs-2' })
-const detail = atom({ plugin: 'delegate-cli-panel', key: 'detail' } as const, null, { shape: 'detail-2' })
+const runs = atom({ plugin: 'delegate-cli-panel', key: 'runs' } as const, [], { shape: 'runs-3' })
+const detail = atom({ plugin: 'delegate-cli-panel', key: 'detail' } as const, null, { shape: 'detail-3' })
 const selected = atom({ plugin: 'delegate-cli-panel', key: 'selected' } as const, null)
 const scope = atom({ plugin: 'delegate-cli-panel', key: 'scope' } as const, 'mine')
 const tab = atom({ plugin: 'delegate-cli-panel', key: 'tab' } as const, 'auto')
 const autoOpened = atom({ plugin: 'delegate-cli-panel', key: 'autoOpened' } as const, [])
 const dismissed = atom({ plugin: 'delegate-cli-panel', key: 'dismissed' } as const, false)
+const stopArm = atom({ plugin: 'delegate-cli-panel', key: 'stopArm' } as const, null, { shape: 'stop-1' })
 
 // A finished run's files never change again, so it is read once per load.
 const finished = new Map<string, RunRow>()
@@ -191,6 +197,76 @@ function activityOf(lines: string[], cwd: string) {
   return entry.text
 }
 
+function isPreamble(line: string) {
+  return line.startsWith('Your runner metadata') || line.startsWith('Delegated subtask:')
+}
+
+// The runner prepends two English paragraphs. Drop those, and nothing else.
+function stripRunnerNotes(body: string) {
+  const lines = body.replace(/\r\n/g, '\n').split('\n')
+  let i = 0
+  let skipped = 0
+  while (skipped < 2) {
+    while (i < lines.length && (lines[i] ?? '').trim() === '') i++
+    if (i >= lines.length || !isPreamble((lines[i] ?? '').trim())) break
+    i++
+    while (i < lines.length && (lines[i] ?? '').trim() !== '' && !isPreamble((lines[i] ?? '').trim())) i++
+    skipped++
+  }
+  while (i < lines.length && (lines[i] ?? '').trim() === '') i++
+
+  return lines.slice(i).join('\n')
+}
+
+function goalLine(body: string) {
+  for (const line of body.split('\n')) {
+    const matched = /^(?:目标[:：])\s*(.*)$/.exec(line.trim())
+    const goal = matched?.[1]?.trim()
+    if (goal) return goal
+  }
+
+  return ''
+}
+
+function firstLine(body: string) {
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed) return trimmed
+  }
+
+  return ''
+}
+
+function clipTitle(value: string) {
+  const chars = Array.from(value.trim())
+  if (chars.length <= TITLE_CHARS) return chars.join('')
+
+  return `${chars.slice(0, TITLE_CHARS).join('')}…`
+}
+
+// Markdown refuses every control character except tab and newline.
+function forMarkdown(value: string) {
+  return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+}
+
+function parseActivity(value: unknown): RunActivity | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  const kind = record.kind
+  if (kind !== 'thinking' && kind !== 'tool' && kind !== 'writing' && kind !== 'waiting') return null
+  const since = num(record.since)
+  if (since === null) return null
+
+  return { kind, label: text(record.label), since }
+}
+
+function pidOf(value: unknown) {
+  const pid = num(value)
+  if (pid === null || pid <= 0) return null
+
+  return Math.trunc(pid)
+}
+
 async function readTail($: EngineInterface, path: string, size: number, mtimeMs: number) {
   const known = tails.get(path)
   if (known && known.size === size && known.mtimeMs === mtimeMs) return known.lines
@@ -214,6 +290,39 @@ async function readResult($: EngineInterface, run: RunRow) {
   return result
 }
 
+async function readFile($: EngineInterface, path: string) {
+  if (!path) return ''
+  const body = await $.fs.read(path).catch(() => '')
+
+  return typeof body === 'string' ? body : ''
+}
+
+// Title: run.json title, else 「目标：」 in task.md, else the handoff's first line,
+// else the first line of task.md once the runner's two paragraphs are gone.
+async function taskTitle($: EngineInterface, dir: string, meta: Record<string, unknown>) {
+  const given = text(meta.title).trim()
+  if (given) return clipTitle(given)
+  const task = stripRunnerNotes(await readFile($, `${dir}/task.md`))
+  const goal = goalLine(task)
+  if (goal) return clipTitle(goal)
+  const handoffPath = text(meta.handoff_file) || `${dir}/handoff.md`
+  const handoff = firstLine(await readFile($, handoffPath))
+  if (handoff) return clipTitle(handoff)
+
+  return clipTitle(firstLine(task)) || '未命名任务'
+}
+
+async function readTask($: EngineInterface, run: RunRow) {
+  const paths = [run.handoffFile, `${run.runDir}/handoff.md`].filter((path, index, all) => path && all.indexOf(path) === index)
+  for (const path of paths) {
+    const body = (await readFile($, path)).trim()
+    if (body) return { task: body, taskNote: false }
+  }
+  const task = stripRunnerNotes(await readFile($, `${run.runDir}/task.md`)).trim()
+
+  return { task, taskNote: true }
+}
+
 async function loadRow($: EngineInterface, root: string, name: string, sessionId: string, now: number) {
   const dir = `${root}/${name}`
   let meta: Record<string, unknown>
@@ -227,6 +336,7 @@ async function loadRow($: EngineInterface, root: string, name: string, sessionId
   const finishedAt = num(meta.finished_at)
   const row: RunRow = {
     id: name,
+    title: await taskTitle($, dir, meta),
     agent: text(meta.agent) || (RUN_DIR.exec(name)?.[7] ?? '?'),
     model: text(meta.model) || text(meta.requested_model) || '默认模型',
     thinking: text(meta.thinking),
@@ -242,6 +352,10 @@ async function loadRow($: EngineInterface, root: string, name: string, sessionId
     lastLine: '',
     tokens: num(usage?.total_tokens),
     error: text(meta.error),
+    activity: parseActivity(meta.activity),
+    liveText: text(meta.live_text),
+    runnerPid: pidOf(meta.runner_pid),
+    handoffFile: text(meta.handoff_file),
   }
   if (ACTIVE.has(row.status)) {
     const log = await progressLog($, dir)
@@ -257,15 +371,25 @@ async function loadDetail($: EngineInterface, run: RunRow) {
   const size = log?.size ?? 0
   const mtimeMs = log?.mtimeMs ?? 0
   const result = ACTIVE.has(run.status) ? '' : await readResult($, run)
+  const task = await readTask($, run)
   const known = await read($, detail)
-  if (known?.id === run.id && known.size === size && known.mtimeMs === mtimeMs && known.result === result) return
+  if (
+    known?.id === run.id &&
+    known.size === size &&
+    known.mtimeMs === mtimeMs &&
+    known.result === result &&
+    known.task === task.task &&
+    known.taskNote === task.taskNote
+  ) {
+    return
+  }
   const lines = log ? await readTail($, `${run.runDir}/progress.log`, size, mtimeMs) : []
-  const next: RunDetail = { id: run.id, lines, size, mtimeMs, result }
+  const next: RunDetail = { id: run.id, lines, size, mtimeMs, result, task: task.task, taskNote: task.taskNote }
   await update($, detail, () => next)
 }
 
 async function announce($: EngineInterface, rows: RunRow[]) {
-  const live = rows.filter(run => run.isMine && ACTIVE.has(run.status) && !run.isStale)
+  const live = rows.filter(run => run.isMine && isLiveRun(run))
   const opened = await read($, autoOpened)
   const fresh = live.filter(run => !opened.includes(run.id))
   if (fresh.length) {
@@ -290,8 +414,12 @@ async function refresh($: EngineInterface, isForced = false) {
     const now = await $.clock.now()
     const open = await read($, selected)
     const known = await read($, runs)
-    const isLive = known.some(run => ACTIVE.has(run.status) && !run.isStale)
-    if (!isForced && !isWoken && !isLive && open === null && now - lastScan < IDLE_MS) return
+    const openRun = known.find(run => run.id === open)
+    const openLive = !!openRun && isLiveRun(openRun)
+    const isLive = known.some(run => isLiveRun(run))
+    // Open and still running: every tick. Any other live run, or a run left open: 2s. Idle: ~10s.
+    const gap = openLive ? TICK_MS : (isLive || open !== null ? LIVE_MS : IDLE_MS)
+    if (!isForced && !isWoken && now - lastScan < gap) return
     isWoken = false
     lastScan = now
     const home = await $.env.get('HOME')
@@ -345,6 +473,10 @@ function tokens(n: number | null) {
   return `${shown} tok`
 }
 
+function isLiveRun(run: RunRow) {
+  return ACTIVE.has(run.status) && !run.isStale
+}
+
 function state(run: RunRow): { glyph: string; label: string; tone: Tone } {
   if (ACTIVE.has(run.status)) {
     return run.isStale
@@ -367,11 +499,54 @@ function modelOf(run: RunRow) {
   return run.thinking ? `${model} / ${run.thinking}` : model
 }
 
-function facts(run: RunRow, now: number) {
-  const project = run.cwd.split('/').pop() || run.cwd
-  return [run.access === 'read' ? '只读' : '可写', duration((run.finishedAt ?? now) - run.startedAt), tokens(run.tokens), project]
+function clockOf(ms: number) {
+  const date = new Date(ms)
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+function subtitle(run: RunRow, now: number) {
+  const agent = AGENTS[run.agent] ?? run.agent
+  const access = run.access === 'read' ? '只读' : '可写'
+
+  return [agent, modelOf(run), access, clockOf(run.startedAt), duration((run.finishedAt ?? now) - run.startedAt), tokens(run.tokens)]
     .filter(Boolean)
     .join(' · ')
+}
+
+function projectOf(run: RunRow) {
+  return run.cwd.split('/').filter(part => part !== '').at(-1) || '未知项目'
+}
+
+function byRecency(a: RunRow, b: RunRow) {
+  const live = Number(isLiveRun(b)) - Number(isLiveRun(a))
+  if (live !== 0) return live
+
+  return b.startedAt - a.startedAt
+}
+
+// One section per project, in the order each project's top run sorts.
+function groupRuns(rows: RunRow[]) {
+  const groups: { project: string; runs: RunRow[] }[] = []
+  for (const run of [...rows].sort(byRecency)) {
+    const project = projectOf(run)
+    const found = groups.find(group => group.project === project)
+    if (found) found.runs.push(run)
+    else groups.push({ project, runs: [run] })
+  }
+
+  return groups
+}
+
+function liveLine(run: RunRow, now: number) {
+  const activity = run.activity
+  if (!activity || !isLiveRun(run)) return ''
+  const seconds = Math.max(0, Math.floor((now - activity.since * 1000) / 1000))
+  if (activity.kind === 'thinking') return `◐ 正在思考 · 已 ${seconds} 秒`
+  if (activity.kind === 'tool') return `◐ 正在执行 ${activity.label} · ${seconds} 秒`
+  if (activity.kind === 'writing') return '◐ 正在写回复…'
+  if (activity.kind === 'waiting') return `◐ 等待模型 · 已 ${seconds} 秒`
+
+  return ''
 }
 
 // Rows an entry takes at this width, roughly: a message wraps, everything else is one line.
@@ -386,12 +561,47 @@ function height(entry: Entry, columns: number) {
   return Math.min(rows, 14)
 }
 
+async function stopRun($: EngineInterface, run: RunRow) {
+  if (run.runnerPid === null) {
+    $.ui.toast('没有 runner 进程号，未停止')
+    return
+  }
+  const pid = String(run.runnerPid)
+  let command = ''
+  try {
+    const checked = await $.process.run(['ps', '-o', 'command=', '-p', pid])
+    command = checked.stdout
+  } catch {
+    $.ui.toast('无法核对 runner 进程，未停止')
+    return
+  }
+  if (!command.includes('run_cli.py')) {
+    $.ui.toast('进程命令行不含 run_cli.py，未停止')
+    return
+  }
+  try {
+    await $.process.run(['kill', '-TERM', pid])
+  } catch {
+    $.ui.toast('停止信号没有发出')
+    return
+  }
+  $.ui.toast('已发送停止信号')
+}
+
+async function openRun($: EngineInterface, run: RunRow) {
+  await update($, stopArm, () => null)
+  await update($, tab, () => 'auto')
+  await update($, selected, () => run.id)
+  await loadDetail($, run)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'delegate-runs',
       description: '打开子 Agent 面板：delegate-cli 派发的 Codex/Pi/Cursor 运行、结果与实时过程',
     })
+    await update($, stopArm, () => null)
     $.clock.every(TICK_MS, () => void refresh($).catch(() => undefined))
     void reopen($).catch(() => undefined)
 
@@ -437,14 +647,22 @@ export const register: Register = on => {
     if (run) {
       const log = await read($, detail)
       const page = await read($, tab)
+      const arm = await read($, stopArm)
       const look = state(run)
-      const isLive = ACTIVE.has(run.status) && !run.isStale
+      const isLive = isLiveRun(run)
+      const armed = !!arm && arm.id === run.id && now - arm.at <= STOP_MS
       const result = log?.id === run.id ? log.result : ''
+      const task = log?.id === run.id ? log.task : ''
+      const taskNote = log?.id === run.id ? log.taskNote : false
       const isResult = page === 'result' || (page === 'auto' && !isLive && result !== '')
+      const showing = page === 'task' ? 'task' : isResult ? 'result' : 'log'
       const entries = parse(log?.id === run.id ? log.lines : [], run.cwd)
       const latest = entries.filter(one => one.kind !== 'quiet').at(-1)
       const current = isLive && latest?.kind === 'tool' ? latest : undefined
-      let budget = room - (run.error ? 9 : 7)
+      const beat = liveLine(run, now)
+      const streaming = forMarkdown(run.liveText)
+      const hasStreaming = isLive && streaming.trim() !== ''
+      let budget = room - (run.error ? 9 : 7) - (beat ? 1 : 0) - (hasStreaming ? 4 : 0)
       let first = entries.length
       while (first > 0 && budget - height(entries[first - 1] as Entry, columns) >= 0) {
         budget -= height(entries[first - 1] as Entry, columns)
@@ -454,7 +672,14 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between">
-            <Button key="back" label="‹ 全部运行" onPress={() => update($, selected, () => null)} />
+            <Button
+              key="back"
+              label="‹ 全部运行"
+              onPress={async () => {
+                await update($, stopArm, () => null)
+                await update($, selected, () => null)
+              }}
+            />
             {result ? (
               <Button
                 key="copy-result"
@@ -477,16 +702,42 @@ export const register: Register = on => {
           </Box>
           <Box flexDirection="row" justifyContent="space-between" marginTop={1}>
             <Text size="heading" weight="semibold" wrap="truncate-end">
-              {AGENTS[run.agent] ?? run.agent}
-              <Text dimColor weight="regular"> {modelOf(run)}</Text>
+              {run.title}
             </Text>
             <Text color={look.tone} weight="medium">
               {look.glyph} {look.label}
             </Text>
           </Box>
           <Text size="caption" dimColor wrap="truncate-end">
-            {facts(run, now)}
+            {subtitle(run, now)}
           </Text>
+          <Box flexDirection="row" gap={1} marginTop={1}>
+            {isLive ? (
+              <Button
+                key="stop"
+                label={armed ? '确认停止' : '停止'}
+                variant={armed ? 'primary' : 'secondary'}
+                onPress={async () => {
+                  const at = await $.clock.now()
+                  const pending = await read($, stopArm)
+                  if (!pending || pending.id !== run.id || at - pending.at > STOP_MS) {
+                    await update($, stopArm, () => ({ id: run.id, at }))
+                    return
+                  }
+                  await update($, stopArm, () => null)
+                  await stopRun($, run)
+                }}
+              />
+            ) : null}
+            <Button
+              key="follow"
+              label="追问"
+              onPress={async () => {
+                await $.prompt.fill({ text: `用 delegate-cli 续接这次运行（${run.id}）：`, mode: 'replace' })
+                $.ui.toast('在输入框补充要求后发送')
+              }}
+            />
+          </Box>
           {run.error ? (
             <Text size="footnote" color="error" wrap="wrap">
               {run.error}
@@ -494,19 +745,25 @@ export const register: Register = on => {
           ) : null}
           <Box flexDirection="row" gap={1} marginTop={1}>
             <Button
-              key="tab-result"
-              label="结果"
-              variant={isResult ? 'primary' : 'secondary'}
-              onPress={() => update($, tab, () => 'result')}
+              key="tab-task"
+              label="任务"
+              variant={showing === 'task' ? 'primary' : 'secondary'}
+              onPress={() => update($, tab, () => 'task')}
             />
             <Button
               key="tab-log"
               label={isLive ? '实时过程' : '过程'}
-              variant={isResult ? 'secondary' : 'primary'}
+              variant={showing === 'log' ? 'primary' : 'secondary'}
               onPress={() => update($, tab, () => 'log')}
             />
+            <Button
+              key="tab-result"
+              label="结果"
+              variant={showing === 'result' ? 'primary' : 'secondary'}
+              onPress={() => update($, tab, () => 'result')}
+            />
           </Box>
-          {isResult ? (
+          {showing === 'result' ? (
             <Box flexDirection="column" marginTop={1}>
               {result ? (
                 <Markdown text={result.length > RESULT_CHARS ? `${result.slice(0, RESULT_CHARS)}\n\n…` : result} />
@@ -516,6 +773,15 @@ export const register: Register = on => {
               {result.length > RESULT_CHARS ? (
                 <Text size="caption" dimColor>
                   结果较长，只显示前 {RESULT_CHARS} 字；“复制结果”可拿到全文。
+                </Text>
+              ) : null}
+            </Box>
+          ) : showing === 'task' ? (
+            <Box flexDirection="column" marginTop={1}>
+              {task ? <Markdown text={forMarkdown(task)} /> : <Text dimColor>这次运行没有留下任务说明。</Text>}
+              {taskNote ? (
+                <Text size="caption" dimColor>
+                  {TASK_NOTE}
                 </Text>
               ) : null}
             </Box>
@@ -577,6 +843,19 @@ export const register: Register = on => {
                   </Text>
                 )
               })}
+              {hasStreaming ? (
+                <Box flexDirection="column" marginTop={1}>
+                  <Text size="caption" dimColor>
+                    输入中
+                  </Text>
+                  <Markdown key="live-text" text={`${streaming}▍`} />
+                </Box>
+              ) : null}
+              {beat ? (
+                <Text size="footnote" color="claude" tabular>
+                  {beat}
+                </Text>
+              ) : null}
             </Box>
           )}
         </Box>
@@ -584,7 +863,9 @@ export const register: Register = on => {
     }
 
     const shown = all.filter(one => (view === 'mine' ? one.isMine : one.startedAt >= now - RECENT_MS))
-    const live = shown.filter(one => ACTIVE.has(one.status) && !one.isStale).length
+    const ordered = [...shown].sort(byRecency).slice(0, 60)
+    const blocks = view === 'all' ? groupRuns(ordered) : [{ project: '', runs: ordered }]
+    const live = shown.filter(one => isLiveRun(one)).length
 
     return (
       <Box flexDirection="column">
@@ -616,43 +897,67 @@ export const register: Register = on => {
             </Text>
           </Box>
         ) : null}
-        {shown.slice(0, 60).map(one => {
-          const look = state(one)
-
-          return (
-            <Box key={`card-${one.id}`} flexDirection="column" marginTop={1} paddingX={1} borderStyle="round" borderDimColor>
-              <Box flexDirection="row" justifyContent="space-between">
-                <Button
-                  key={one.id}
-                  plain
-                  onPress={async () => {
-                    await update($, tab, () => 'auto')
-                    await update($, selected, () => one.id)
-                    await loadDetail($, one)
-                  }}
-                >
-                  {AGENTS[one.agent] ?? one.agent} <Text dimColor>{modelOf(one)}</Text>
-                </Button>
-                <Text size="caption" color={look.tone} weight="medium">
-                  {look.glyph} {look.label}
+        {blocks.map(block => (
+          <Box key={`group-${block.project || 'mine'}`} flexDirection="column">
+            {view === 'all' ? (
+              <Box marginTop={1}>
+                <Text size="caption" dimColor weight="medium">
+                  {block.project}
                 </Text>
               </Box>
-              <Text size="caption" dimColor wrap="truncate-end">
-                {facts(one, now)}
-              </Text>
-              {one.lastLine ? (
-                <Text size="footnote" wrap="truncate-end">
-                  {one.lastLine}
-                </Text>
-              ) : null}
-              {one.error && !ACTIVE.has(one.status) ? (
-                <Text size="footnote" color="error" wrap="truncate-end">
-                  {one.error}
-                </Text>
-              ) : null}
-            </Box>
-          )
-        })}
+            ) : null}
+            {block.runs.map(one => {
+              const look = state(one)
+              const beat = liveLine(one, now)
+              const failed = one.error && !ACTIVE.has(one.status) ? one.error : ''
+
+              return (
+                <Box key={`card-${one.id}`} flexDirection="column" marginTop={1} paddingX={1} borderStyle="round" borderDimColor>
+                  <Button
+                    key={one.id}
+                    plain
+                    onPress={() => openRun($, one)}
+                  >
+                    <Text weight="semibold" wrap="truncate-end">
+                      {one.title}{' '}
+                    </Text>
+                    <Text color={look.tone} weight="medium">
+                      {look.glyph} {look.label}
+                    </Text>
+                    {'\n'}
+                    <Text size="caption" dimColor wrap="truncate-end">
+                      {subtitle(one, now)}
+                    </Text>
+                    {one.lastLine ? '\n' : ''}
+                    {one.lastLine ? (
+                      <Text size="footnote" wrap="truncate-end">
+                        {one.lastLine}
+                      </Text>
+                    ) : (
+                      ''
+                    )}
+                    {beat ? '\n' : ''}
+                    {beat ? (
+                      <Text size="footnote" color="claude">
+                        {beat}
+                      </Text>
+                    ) : (
+                      ''
+                    )}
+                    {failed ? '\n' : ''}
+                    {failed ? (
+                      <Text size="footnote" color="error" wrap="truncate-end">
+                        {failed}
+                      </Text>
+                    ) : (
+                      ''
+                    )}
+                  </Button>
+                </Box>
+              )
+            })}
+          </Box>
+        ))}
         <Box marginTop={1}>
           <Text size="caption" dimColor>
             delegate-cli-panel {VERSION}
