@@ -1,0 +1,33 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/private/tmp/dcli-smoke.FOOz","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","model":"Grok 4.7 256K Medium","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Read a.txt in the current directory, then reply with exactly: PONG <its content>"}]},"session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2"}
+{"type":"thinking","subtype":"delta","text":"The","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611769145}
+{"type":"thinking","subtype":"delta","text":" user","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611769146}
+{"type":"thinking","subtype":"delta","text":" wants","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611769146}
+{"type":"thinking","subtype":"delta","text":" me to read a.txt","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611769436}
+{"type":"thinking","subtype":"delta","text":" in","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611769452}
+{"type":"thinking","subtype":"delta","text":" the","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611769493}
+{"type":"thinking","subtype":"delta","text":" current","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611769558}
+{"type":"thinking","subtype":"delta","text":" director","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611769687}
+{"type":"thinking","subtype":"delta","text":"y and reply with exactly: PONG <its content>","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611770364}
+{"type":"thinking","subtype":"completed","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611770366}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"我先读取当前目录里的 `a.txt`，再按你要求的格式回复。"}]},"session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","model_call_id":"e49ebc65-23d0-4292-bcfd-7b408ed6e44a-0-u1m6","timestamp_ms":1793611770369}
+{"type":"tool_call","subtype":"started","call_id":"call-1fc7292e-9184-4aa5-a2e1-f1aef004be96-0\nfc_b91cbcb4-e144-9f9f-b725-c9be46f48724_0","tool_call":{"readToolCall":{"args":{"path":"/private/tmp/dcli-smoke.FOOz/a.txt"}},"hookAdditionalContexts":[],"toolCallId":"call-1fc7292e-9184-4aa5-a2e1-f1aef004be96-0\nfc_b91cbcb4-e144-9f9f-b725-c9be46f48724_0","startedAtMs":"1793611767260"},"model_call_id":"e49ebc65-23d0-4292-bcfd-7b408ed6e44a-0-u1m6","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611770370}
+{"type":"tool_call","subtype":"completed","call_id":"call-1fc7292e-9184-4aa5-a2e1-f1aef004be96-0\nfc_b91cbcb4-e144-9f9f-b725-c9be46f48724_0","tool_call":{"readToolCall":{"args":{"path":"/private/tmp/dcli-smoke.FOOz/a.txt"},"result":{"success":{"content":"hello\n","isEmpty":false,"exceededLimit":false,"totalLines":2,"fileSize":6,"path":"/private/tmp/dcli-smoke.FOOz/a.txt","readRange":{"startLine":1,"endLine":2},"relatedCursorRulePaths":[],"relatedCursorRules":[]}}},"hookAdditionalContexts":[],"toolCallId":"call-1fc7292e-9184-4aa5-a2e1-f1aef004be96-0\nfc_b91cbcb4-e144-9f9f-b725-c9be46f48724_0","startedAtMs":"1793611767260","completedAtMs":"1793611767345"},"model_call_id":"e49ebc65-23d0-4292-bcfd-7b408ed6e44a-0-u1m6","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611770493}
+{"type":"thinking","subtype":"delta","text":"The","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611771760}
+{"type":"thinking","subtype":"delta","text":" file","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611771761}
+{"type":"thinking","subtype":"delta","text":" contains","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611771761}
+{"type":"thinking","subtype":"delta","text":" \"hello\".","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611771913}
+{"type":"thinking","subtype":"delta","text":" The","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611771966}
+{"type":"thinking","subtype":"delta","text":" user","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611772057}
+{"type":"thinking","subtype":"delta","text":" wants","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611772109}
+{"type":"thinking","subtype":"delta","text":" me","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611772213}
+{"type":"thinking","subtype":"delta","text":" to","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611772264}
+{"type":"thinking","subtype":"delta","text":" reply","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611772330}
+{"type":"thinking","subtype":"delta","text":" with","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611772409}
+{"type":"thinking","subtype":"delta","text":" exactly:","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611772588}
+{"type":"thinking","subtype":"delta","text":" PONG","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611772659}
+{"type":"thinking","subtype":"delta","text":" <its","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611772741}
+{"type":"thinking","subtype":"delta","text":" content>","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611772810}
+{"type":"thinking","subtype":"completed","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","timestamp_ms":1793611773203}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"PONG hello"}]},"session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2"}
+{"type":"result","subtype":"success","duration_ms":9334,"duration_api_ms":9334,"is_error":false,"result":"我先读取当前目录里的 `a.txt`，再按你要求的格式回复。PONG hello","session_id":"d21ae73f-2304-49e5-8ff1-faf06aafe2d2","request_id":"e49ebc65-23d0-4292-bcfd-7b408ed6e44a","usage":{"inputTokens":8875,"outputTokens":205,"cacheReadTokens":20736,"cacheWriteTokens":0}}
