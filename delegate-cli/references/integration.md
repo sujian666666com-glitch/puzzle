@@ -2,7 +2,7 @@
 
 ## 安装与触发
 
-把整个 `delegate-cli` 目录放在 Claude Code 本机的 `~/.claude/skills/delegate-cli/`，或项目的 `.claude/skills/delegate-cli/`。保留 scripts、references、panel 与 `models.json` 的相对位置。主入口只需标准 name/description；无需固定 Claude 模型、放宽工具权限或给调度 Skill 加 `context: fork`。
+把整个 `delegate-cli` 目录放在 Claude Code 本机的 `~/.claude/skills/delegate-cli/`，或项目的 `.claude/skills/delegate-cli/`。保留 scripts、references 与 `models.json` 的相对位置。主入口只需标准 name/description；无需固定 Claude 模型、放宽工具权限或给调度 Skill 加 `context: fork`。
 
 在 Claude Code 输入：
 
@@ -39,7 +39,7 @@
 
 ## 进度面板（delegate-cli-panel）
 
-`panel/` 是一个 Claude Code 函数钩子 mod：在桌面 App 对话右侧停靠一个「子 Agent」pane，定时读取 `~/.claude/cli-runs/*/run.json` 与 `progress.log`（打开运行中的运行时每 1 秒，有运行中任务 2 秒，空闲约 10 秒）。
+面板是与本 skill 分开存放的 Claude Code 函数钩子插件 `delegate-cli-panel`（puzzle 仓库的 `delegate-cli-panel/` 目录）：在桌面 App 对话右侧停靠一个「子 Agent」pane，定时读取 `~/.claude/cli-runs/*/run.json` 与 `progress.log`（打开运行中的运行时每 1 秒，有运行中任务 2 秒，空闲约 10 秒）。
 
 - 只扫描默认目录 `~/.claude/cli-runs/` 里最近 7 天的运行（`--run-root` 改过目录的看不到）。默认列出本会话派发的运行（按 `claude_session_id` 匹配），可切到“近 24 小时”（按 `cwd` 最后一段分组）；运行中的排最前，其余按时间倒序。
 - 卡片以 `title` 命名（旧记录回退到交接里的「目标：」行），副信息是 Agent · 模型(/思考档) · 只读|可写 · 派发时刻 · 耗时 · token，失败的显示原因。
@@ -49,7 +49,7 @@
 - 本会话有新运行启动时尝试打开 pane，底部状态栏同时显示“子 Agent 运行中”。定时器发起的打开属于“非主动请求”，界面不够宽时 App 会先挂起不显示，此时状态栏会提示 `/delegate-runs`；该命令是主动请求，打不开时会直接报出 App 给的原因。pane 由 App 决定落位，mod 不能插进 App 内置的会话信息列表。
 - 除「停止」向 runner 发 SIGTERM 外不改变任何状态：不调用模型、不改运行记录。旧版 runner 产生的记录没有 `claude_session_id`，只在“近 24 小时”里出现。
 
-安装方式见 `panel/README.md`。CLI 使用的 MCP 和桌面端内置插件不是自动共享关系，面板与 GUI 验收互不依赖。
+安装方式见插件目录里的 `README.md`。CLI 使用的 MCP 和桌面端内置插件不是自动共享关系，面板与 GUI 验收互不依赖。
 
 ## 浏览器与桌面验收
 

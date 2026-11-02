@@ -19,7 +19,7 @@ Claude Code 的函数钩子 mod，配合 `delegate-cli` skill 使用：在桌面
 在终端执行一次，user 级安装，之后新开的会话都会加载；插件直接从本目录读取：
 
 ```bash
-claude plugin marketplace add ~/.claude/skills/delegate-cli/panel
+claude plugin marketplace add ~/Desktop/jj/puzzle/delegate-cli-panel
 claude plugin install delegate-cli-panel@delegate-cli-panel
 ```
 
@@ -33,8 +33,8 @@ claude plugin marketplace remove delegate-cli-panel
 ## 开发与测试
 
 ```bash
-claude plugin validate ~/.claude/skills/delegate-cli/panel
-claude plugin test ~/.claude/skills/delegate-cli/panel
+claude plugin validate ~/Desktop/jj/puzzle/delegate-cli-panel
+claude plugin test ~/Desktop/jj/puzzle/delegate-cli-panel
 ```
 
 数据格式依赖 `scripts/run_cli.py` 写出的 `run.json` 字段（`status`、`agent`、`model`、`thinking`、`access`、`started_at`、`finished_at`、`claude_session_id`、`usage.total_tokens`、`watch_command`、`error`，以及 `title`、`goal`、`handoff_file`、`activity`、`live_text`、`runner_pid`）。旧记录没有后六个字段，面板照常列出。改 runner 字段时同步修改 `hooks/register.tsx` 并把对应 atom 的 `shape` 标签加一。
