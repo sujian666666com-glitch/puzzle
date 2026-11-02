@@ -18,7 +18,7 @@ import sys
 import tempfile
 import time
 import shlex
-from progress import Progress
+from progress import Progress, cursor_partial
 
 AGENTS = ('codex', 'pi', 'cursor')
 EXECUTABLES = {'codex': 'codex', 'pi': 'pi', 'cursor': 'cursor-agent'}
@@ -275,8 +275,9 @@ def build_command(args, info, run_dir, previous, plan):
             require_flags(info['help'], [flag])
             command += [flag]
     else:
-        require_flags(info['help'], ['--print', '--output-format', '--mode', '--force', '--resume', '--trust'])
-        command += ['--print', '--output-format', 'stream-json']
+        require_flags(info['help'], ['--print', '--output-format', '--mode', '--force', '--resume', '--trust',
+                                     '--stream-partial-output'])
+        command += ['--print', '--output-format', 'stream-json', '--stream-partial-output']
         if model:
             command += ['--model', model]
         # ask is Cursor's read-only mode; --force applies edits and runs commands (it also implies trust).
@@ -365,7 +366,7 @@ def parse_cursor(path):
             result['session_id'] = event['session_id']
         if kind == 'system' and event.get('subtype') == 'init':
             result['model'] = event.get('model')
-        elif kind == 'assistant':
+        elif kind == 'assistant' and not cursor_partial(event):
             parts = (event.get('message') or {}).get('content') or []
             text = ''.join(part.get('text', '') for part in parts if isinstance(part, dict) and part.get('type') == 'text')
             if text.strip():
@@ -426,13 +427,27 @@ def stop_process_group(process):
     process.wait()
 
 
+def task_identity(handoff, title):
+    lines = handoff.splitlines()
+    goal = next((line[3:].strip() for line in lines if line.startswith(('目标：', '目标:'))), '')
+    title = (title or '').strip()
+    if not title:
+        title = goal.strip() or next((line.strip() for line in lines if line.strip()), '')
+    if len(title) > 40:
+        title = title[:40] + '…'
+    return title, goal
+
+
 def run_job(args):
     cwd = Path(args.cwd).expanduser().resolve(strict=True)
     if not cwd.is_dir():
         raise ValueError('--cwd must be a directory')
     if args.skip_git_check and args.agent != 'codex':
         raise ValueError('--skip-git-check only applies to --agent codex')
-    prompt = Path(args.prompt_file).expanduser().read_text(encoding='utf-8')
+    handoff_bytes = Path(args.prompt_file).expanduser().read_bytes()
+    handoff = handoff_bytes.decode('utf-8')
+    title, goal = task_identity(handoff, args.title)
+    prompt = handoff
     if not prompt.strip():
         raise ValueError('Task file is empty')
     prompt = ('Delegated subtask: complete only the task below. Do not invoke other AI CLIs '
@@ -458,7 +473,11 @@ def run_job(args):
               'Agent-Run: ' + args.agent + ':' + run_dir.name + ' as Git trailers. '
               'Never invent an ID. This does not authorize committing.\n\n' + prompt)
     (run_dir / 'task.md').write_text(prompt, encoding='utf-8')
+    handoff_path = run_dir / 'handoff.md'
+    handoff_path.write_bytes(handoff_bytes)
     meta = {'agent': args.agent, 'cwd': str(cwd), 'run_dir': str(run_dir),
+            'title': title, 'goal': goal, 'handoff_file': str(handoff_path),
+            'activity': None, 'live_text': '',
             'version': info['version'], 'argv': None, 'access': args.access,
             'requested_model': args.model, 'requested_thinking': args.thinking,
             'model': plan['model'], 'thinking': plan['thinking'], 'model_check': plan['model_check'],
@@ -544,6 +563,9 @@ def run_job(args):
             emit({'status': 'running', 'run_file': str(meta_path), 'pid': process.pid,
                   'model': meta['model'], 'watch_command': meta['watch_command']})
             if not args.quiet:
+                print('── 任务：' + title + ' ──', flush=True)
+                print(handoff, end='' if handoff.endswith('\n') else '\n', flush=True)
+                print('── 进度 ──', flush=True)
                 progress.echo_on()  # First line stays JSON; the last line is the final JSON.
             try:
                 deadline = time.monotonic() + args.timeout
@@ -597,7 +619,10 @@ def run_job(args):
     except Exception as error:  # Whatever broke, run.json must not stay "running".
         if process and process.poll() is None:
             stop_process_group(process)
-        meta.update(status='failed', error=type(error).__name__ + ': ' + str(error))
+        if isinstance(error, InterruptedError):
+            meta['status'] = 'cancelled'
+        else:
+            meta.update(status='failed', error=type(error).__name__ + ': ' + str(error))
     finally:
         for signum, handler in handlers.items():
             signal.signal(signum, handler)
@@ -608,6 +633,7 @@ def run_job(args):
                 ('，约 ${:.4f}'.format(usage['cost_usd']) if usage.get('cost_usd') else ''))
         progress.write('● ' + meta['status'] + ('：' + meta['error'] if meta.get('error') else ''))
         meta['finished_at'] = time.time()
+        meta.update(activity=None, live_text='')
         save(meta_path, meta)
         for lock in locks:
             lock.close()
@@ -626,6 +652,7 @@ def main():
     run.add_argument('--agent', required=True, choices=AGENTS)
     run.add_argument('--cwd', required=True)
     run.add_argument('--prompt-file', required=True)
+    run.add_argument('--title', help='Task title; defaults to the handoff goal or first nonempty line')
     run.add_argument('--access', choices=['read', 'write'], default='read')
     run.add_argument('--model', help='Exact ID or an alias from models.json (astra, grok4.7, flash)')
     run.add_argument('--thinking', help='low/medium/high/xhigh/max or 低/中/高/超高/最高')

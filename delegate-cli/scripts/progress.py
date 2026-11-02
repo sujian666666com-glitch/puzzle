@@ -40,12 +40,18 @@ def cursor_tool(call):
     return 'tool', {}, True, None
 
 
+def cursor_partial(event):
+    return 'timestamp_ms' in event and 'model_call_id' not in event
+
+
 class Progress:
     def __init__(self, meta):
         self.meta = meta
         self.offsets = {}
         self.pending = {}
         self.tools = {}
+        self.meta['live_text'] = ''
+        self.activity('waiting', '等待模型')
         self.cwd = str(meta.get('cwd') or '').rstrip('/')
         self.last_activity = time.monotonic()
         self.last_write = self.last_activity
@@ -103,10 +109,12 @@ class Progress:
 
     def started(self, key, name, detail):
         self.tools[key] = (name, detail, time.monotonic())
+        self.activity('tool', (name + ' ' + detail).rstrip())
         self.write('▶ ' + name + ' ' + detail)
 
     def finished(self, key, ok, exit_code=None, seconds=None):
         name, detail, start = self.tools.pop(key, ('tool', '', None))
+        self.idle()
         if seconds is None:
             seconds = time.monotonic() - start if start else 0
         suffix = (' [exit=' + str(exit_code) + ']' if exit_code not in (None, 0) else '') + \
@@ -117,6 +125,19 @@ class Progress:
             self.write('✎ ' + detail + suffix)
         elif seconds >= SLOW_SECONDS:
             self.write('✓ ' + name + ' ' + detail + suffix)
+
+    def activity(self, kind, label):
+        previous = self.meta.get('activity')
+        if previous and (previous['kind'], previous['label']) == (kind, label):
+            return
+        self.meta['activity'] = {'kind': kind, 'label': label, 'since': time.time()}
+
+    def idle(self):
+        if self.tools:
+            name, detail, _ = next(reversed(self.tools.values()))
+            self.activity('tool', (name + ' ' + detail).rstrip())
+        else:
+            self.activity('waiting', '等待模型')
 
     def lines(self, path):
         if not path.exists():
@@ -205,6 +226,11 @@ class Progress:
         self.session(e.get('session_id'))
         if kind == 'system' and e.get('subtype') == 'init':
             self.write('模型 ' + clean(e.get('model', '')))
+        elif kind == 'thinking':
+            if e.get('subtype') == 'delta':
+                self.activity('thinking', '思考中')
+            elif e.get('subtype') == 'completed':
+                self.idle()
         elif kind == 'tool_call' and e.get('subtype') in ('started', 'completed'):
             name, args, ok, code = cursor_tool(e.get('tool_call') or {})
             key = e.get('call_id')
@@ -217,7 +243,13 @@ class Progress:
         elif kind == 'assistant':
             parts = (e.get('message') or {}).get('content') or []
             text = ''.join(p.get('text', '') for p in parts if isinstance(p, dict) and p.get('type') == 'text')
-            self.message(text)
+            if cursor_partial(e):
+                self.meta['live_text'] += text
+                self.activity('writing', '正在输出')
+            else:
+                self.message(text)
+                self.meta['live_text'] = ''
+                self.idle()
         elif kind == 'result':
             self.write('! 本轮出错' if e.get('is_error') else '● 本轮完成；待主控验收')
 
