@@ -15,6 +15,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / 'tests' / 'fixtures'
 RUNS = ROOT / 'runs'
+WINDOWS = os.name == 'nt'
 sys.path.insert(0, str(ROOT / 'scripts'))
 from progress import Progress
 from run_cli import task_identity, parse_cursor
@@ -52,6 +53,7 @@ import subprocess
 import sys
 import time
 
+sys.stdout.reconfigure(encoding='utf-8')  # Real CLIs emit UTF-8 JSON regardless of locale.
 if os.environ.get('TEST_CANCEL'):
     root = Path(os.environ['TEST_HOME'])
     child = '--child' in sys.argv
@@ -66,7 +68,7 @@ if os.environ.get('TEST_CANCEL'):
     while True:
         time.sleep(0.05)
 else:
-    for line in Path(os.environ['TEST_FIXTURE']).read_text().splitlines():
+    for line in Path(os.environ['TEST_FIXTURE']).read_text(encoding='utf-8').splitlines():
         print(line, flush=True)
         time.sleep(float(os.environ.get('TEST_DELAY', '0')))
 '''
@@ -82,8 +84,12 @@ class RunnerTests(unittest.TestCase):
         self.handoff = '说明\r\n目标： 完成离线测试  \r\n\r\n保留末尾空白  '
         self.prompt.write_bytes(self.handoff.encode('utf-8'))
         self.cli = self.root / 'fixture-cli'
-        self.cli.write_text('#!' + sys.executable + '\n' + FAKE_CLI)
+        self.cli.write_text('#!' + sys.executable + '\n' + FAKE_CLI, encoding='utf-8')
         self.cli.chmod(0o700)
+        if WINDOWS:
+            # Windows ignores shebangs; a .cmd shim mirrors how npm-installed CLIs launch.
+            self.cli = self.root / 'fixture-cli.cmd'
+            self.cli.write_text('@"{}" "%~dp0fixture-cli" %*\r\n'.format(sys.executable), encoding='utf-8')
         self.env = dict(os.environ, TEST_CLI=str(self.cli), TEST_HOME=str(self.root),
                         TEST_FIXTURE=str(FIXTURES / 'cursor-partial.jsonl'))
 
@@ -95,7 +101,7 @@ class RunnerTests(unittest.TestCase):
 
     def run_offline(self, agent='cursor', extra=(), script=None):
         result = subprocess.run(self.command(agent, extra, script), env=self.env,
-                                capture_output=True, text=True, timeout=15)
+                                capture_output=True, text=True, encoding='utf-8', timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result.stdout, json.loads(result.stdout.splitlines()[-1])
 
@@ -105,7 +111,7 @@ class RunnerTests(unittest.TestCase):
         return Progress(meta), meta
 
     def events(self, filename):
-        return [json.loads(line) for line in (FIXTURES / filename).read_text().splitlines()]
+        return [json.loads(line) for line in (FIXTURES / filename).read_text(encoding='utf-8').splitlines()]
 
     def test_title_goal(self):
         self.assertEqual(task_identity('\n开头\n目标： 目标全文  \n目标:忽略', None),
@@ -139,8 +145,8 @@ class RunnerTests(unittest.TestCase):
         self.assertIsNone(meta['activity'])
         self.assertEqual(meta['live_text'], '')
         expected = '- `a.txt` 有两行，分别是 `alpha` 和 `beta`。\n- `b.txt` 只有一行，内容是 `gamma`。\n- 两个文件都是纯文本，每行一个英文单词。\n\n完成\n'
-        self.assertEqual(Path(meta['result_file']).read_text(), expected)
-        log = Path(meta['progress_file']).read_text()
+        self.assertEqual(Path(meta['result_file']).read_text(encoding='utf-8'), expected)
+        log = Path(meta['progress_file']).read_text(encoding='utf-8')
         self.assertEqual(log.count('💬'), 2)
         self.assertIn('--stream-partial-output', meta['argv'])
 
@@ -175,7 +181,7 @@ class RunnerTests(unittest.TestCase):
                 if progress.tools:
                     self.assertIn(activity['label'], ('read a.txt', 'read b.txt'))
         self.assertEqual(seen, {'waiting', 'thinking', 'writing', 'tool'})
-        self.assertEqual(progress.path.read_text().count('💬'), 2)
+        self.assertEqual(progress.path.read_text(encoding='utf-8').count('💬'), 2)
         self.assertEqual(meta['live_text'], '')
 
     def test_cursor_plain_and_incomplete_tail(self):
@@ -184,7 +190,7 @@ class RunnerTests(unittest.TestCase):
         for event in events:
             progress.cursor(event)
         self.assertEqual(meta['live_text'], '')
-        self.assertEqual(progress.path.read_text().count('💬'),
+        self.assertEqual(progress.path.read_text(encoding='utf-8').count('💬'),
                          sum(event['type'] == 'assistant' for event in events))
         path = self.root / 'tail.jsonl'
         path.write_text(json.dumps({'type': 'assistant', 'message': {'content': [
@@ -209,11 +215,11 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(states, {'tool', 'waiting'})
                 self.assertEqual(meta['activity']['kind'], 'waiting')
                 if agent == 'codex':
-                    self.assertIn('▶ shell wc -l < notes.txt', progress.path.read_text())
+                    self.assertIn('▶ shell wc -l < notes.txt', progress.path.read_text(encoding='utf-8'))
 
     def start_runner(self, **env):
         process = subprocess.Popen(self.command(), env=dict(self.env, **env),
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
         def cleanup():
             if process.poll() is None:
                 process.terminate()
@@ -227,7 +233,7 @@ class RunnerTests(unittest.TestCase):
         seen = False
         deadline = time.monotonic() + 10
         while process.poll() is None and time.monotonic() < deadline:
-            meta = json.loads(path.read_text())
+            meta = json.loads(path.read_text(encoding='utf-8'))
             if meta['live_text']:
                 seen = True
                 self.assertEqual(meta['activity']['kind'], 'writing')
@@ -235,10 +241,11 @@ class RunnerTests(unittest.TestCase):
         stdout, stderr = process.communicate(timeout=5)
         self.assertEqual(process.returncode, 0, stdout + stderr)
         self.assertTrue(seen)
-        meta = json.loads(path.read_text())
+        meta = json.loads(path.read_text(encoding='utf-8'))
         self.assertEqual(meta['live_text'], '')
         self.assertIsNone(meta['activity'])
 
+    @unittest.skipIf(WINDOWS, 'SIGTERM cannot be caught on Windows; see test_stop_request_kills_process_tree')
     def test_sigterm_cancels_process_group(self):
         process, path = self.start_runner(TEST_CANCEL='1')
         deadline = time.monotonic() + 5
@@ -248,14 +255,35 @@ class RunnerTests(unittest.TestCase):
         process.send_signal(signal.SIGTERM)
         stdout, stderr = process.communicate(timeout=8)
         self.assertEqual(process.returncode, 1, stdout + stderr)
-        meta = json.loads(path.read_text())
+        self.assert_cancelled(process, path, stdout)
+        for name in ('parent', 'child'):
+            self.assertTrue((self.root / (name + '.stopped')).exists(), name)
+
+    @unittest.skipUnless(WINDOWS, 'Windows stop path')
+    def test_stop_request_kills_process_tree(self):
+        process, path = self.start_runner(TEST_CANCEL='1')
+        deadline = time.monotonic() + 5
+        while not (self.root / 'child.ready').exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue((self.root / 'child.ready').exists())
+        (path.parent / 'stop.request').write_text('', encoding='utf-8')
+        stdout, stderr = process.communicate(timeout=8)
+        self.assertEqual(process.returncode, 1, stdout + stderr)
+        self.assert_cancelled(process, path, stdout)
+        # taskkill /F gives no chance to write .stopped; check the tree is gone instead.
+        for name in ('parent', 'child'):
+            pid = (self.root / (name + '.ready')).read_text(encoding='utf-8')
+            listed = subprocess.run(['tasklist', '/FI', 'PID eq ' + pid, '/NH'],
+                                    capture_output=True, text=True, errors='replace').stdout
+            self.assertNotIn(pid, listed.split(), name)
+
+    def assert_cancelled(self, process, path, stdout):
+        meta = json.loads(path.read_text(encoding='utf-8'))
         self.assertEqual(meta['status'], 'cancelled')
         self.assertIsNone(meta['activity'])
         self.assertEqual(meta['live_text'], '')
-        self.assertIn('● cancelled', Path(meta['progress_file']).read_text())
+        self.assertIn('● cancelled', Path(meta['progress_file']).read_text(encoding='utf-8'))
         self.assertEqual(json.loads(stdout.splitlines()[-1])['status'], 'cancelled')
-        for name in ('parent', 'child'):
-            self.assertTrue((self.root / (name + '.stopped')).exists(), name)
         self.assertEqual(meta['runner_pid'], process.pid)
 
     def test_cursor_requires_partial_flag(self):
@@ -289,7 +317,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_python39_syntax(self):
         for filename in ('scripts/run_cli.py', 'scripts/progress.py', 'tests/test_runner.py'):
-            ast.parse((ROOT / filename).read_text(), feature_version=(3, 9))
+            ast.parse((ROOT / filename).read_text(encoding='utf-8'), feature_version=(3, 9))
 
 
 if __name__ == '__main__':
