@@ -5,3 +5,4 @@ __pycache__/
 runs/
 !*.json
 /ik.md
+.omc/
