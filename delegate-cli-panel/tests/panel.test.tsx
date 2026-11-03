@@ -125,7 +125,8 @@ function world(
   on('ui.panes', () => ({ value: [] }))
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.surfaces', () => ({ value: ['desktop'] as const }))
-  on('command.register', () => ({ value: { command: 'delegate-runs' } }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('tool.register', (_, e) => ({ value: { tool: `mcp__delegate-cli-panel__${e.name}` } }))
   on('ui.open', (_, e) => {
     opened.push(e.id)
 

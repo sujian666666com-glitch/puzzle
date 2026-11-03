@@ -30,7 +30,58 @@ export type RunRow = {
   runnerPid: number | null
   /** Absolute path of handoff.md when the runner recorded one. */
   handoffFile: string
+  /** The blueprint task the run works on (run.json task); null on runs dispatched without one. */
+  task: string | null
 }
+
+/** Who makes the next move on a question or a blocker: the person, or the agents and Claude. */
+export type Owner = 'user' | 'agent'
+
+/** Claude's verdict on one acceptance criterion, against the piece version it judged. */
+export type Verdict = { pass: boolean; evidence: string; version: number; at: number }
+
+export type Criterion = { id: string; text: string; verdict: Verdict | null }
+
+/** One requirement block: an outcome that can be accepted on its own. */
+export type Piece = {
+  id: string
+  group: string
+  order: number
+  title: string
+  summary: string
+  scope: string
+  needs: string[]
+  criteria: Criterion[]
+  /** Rises when the summary, scope or criteria change; verdicts on an older version no longer count. */
+  version: number
+  /** The version last accepted whole; null until it first is. */
+  acceptedVersion: number | null
+}
+
+export type Group = { id: string; title: string; order: number }
+
+export type Task = { id: string; pieces: string[]; role: string; agent: string; title: string; after: string[] }
+
+export type Question = { id: string; piece: string; text: string; owner: Owner; answer: string | null }
+
+export type Blocker = { id: string; piece: string; reason: string; owner: Owner; since: number }
+
+/** What the blueprint tool's operation log replays to. Claude writes intent and verdicts; status is derived. */
+export type Blueprint = {
+  schema: 2
+  rev: number
+  /** Epoch ms of the first plan; runs of this session started before it are not its loose runs. */
+  createdAt: number
+  updatedAt: number
+  goal: { title: string; summary: string }
+  groups: Group[]
+  pieces: Piece[]
+  tasks: Task[]
+  questions: Question[]
+  blockers: Blocker[]
+}
+
+export type PuzzleView = 'board' | 'list' | 'tree'
 
 /** A runner's current beat. `since` is epoch seconds. */
 export type RunActivity = {
@@ -72,6 +123,16 @@ declare module 'claude-code' {
       dismissed: boolean
       autoOpened: string[]
       stopArm: Shaped<StopArm | null>
+      /** This session's requirement blueprint, as its log last replayed. */
+      blueprint: Shaped<Blueprint | null>
+      puzzleView: PuzzleView
+      puzzleSelected: string | null
+      /** The block whose card holds the keyboard; its preview stays shown. */
+      puzzleFocused: string | null
+      /** The person closed the puzzle pane; it stays closed until the next plan or /puzzle. */
+      puzzleDismissed: boolean
+      /** tool_use_id of a dispatching Bash call, to the blueprint task it named. */
+      dispatches: Shaped<Record<string, string>>
     }
   }
 }

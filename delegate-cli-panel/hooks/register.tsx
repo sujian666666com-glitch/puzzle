@@ -1,7 +1,19 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { RunActivity, RunDetail, RunRow } from '../types'
+import type { Blueprint, RunActivity, RunDetail, RunRow } from '../types'
+import {
+  apply,
+  blueprintPaths,
+  derive,
+  describe,
+  isRefusal,
+  parseOp,
+  readLog,
+  replay,
+  replyLine,
+  writeLog,
+} from './blueprint'
 
 const VERSION = '0.3.0'
 const PANE = 'delegate-agents'
@@ -56,7 +68,7 @@ type Entry =
 
 // Change a tag when that value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
-const runs = atom({ plugin: 'delegate-cli-panel', key: 'runs' } as const, [], { shape: 'runs-3' })
+const runs = atom({ plugin: 'delegate-cli-panel', key: 'runs' } as const, [], { shape: 'runs-4' })
 const detail = atom({ plugin: 'delegate-cli-panel', key: 'detail' } as const, null, { shape: 'detail-3' })
 const selected = atom({ plugin: 'delegate-cli-panel', key: 'selected' } as const, null)
 const scope = atom({ plugin: 'delegate-cli-panel', key: 'scope' } as const, 'mine')
@@ -64,6 +76,79 @@ const tab = atom({ plugin: 'delegate-cli-panel', key: 'tab' } as const, 'auto')
 const autoOpened = atom({ plugin: 'delegate-cli-panel', key: 'autoOpened' } as const, [])
 const dismissed = atom({ plugin: 'delegate-cli-panel', key: 'dismissed' } as const, false)
 const stopArm = atom({ plugin: 'delegate-cli-panel', key: 'stopArm' } as const, null, { shape: 'stop-1' })
+const blueprint = atom({ plugin: 'delegate-cli-panel', key: 'blueprint' } as const, null, { shape: 'blueprint-1' })
+const dispatches = atom({ plugin: 'delegate-cli-panel', key: 'dispatches' } as const, {}, { shape: 'dispatches-1' })
+
+const RUN_CALL = /run_cli\.py['"]?\s+run\b/
+const TASK_FLAG = /--task(?:=|\s+)(['"]?)([A-Za-z0-9][A-Za-z0-9._-]{0,63})\1(?=\s|$)/
+const UNTRACKED_RUN =
+  '这次派发没有带 --task，需求拼图里不会出现这次运行。按 blueprint 里的任务 ID 补上，或用 blueprint task 增加对应任务后续接。'
+const BLUEPRINT_DESCRIPTION = [
+  "Keeps this session's requirement blueprint (需求拼图) for delegate-cli work. The panel derives every status from it and from each run's run.json; never write a status yourself.",
+  'IDs are yours and stay stable (pieces R1, groups G1, tasks T1, questions Q1, blockers B1); the panel never shows them to the person. Dispatch every run with run_cli.py run --task <task id>.',
+  'Ops: plan — first time: goal {title, summary}, groups [{id, title}], pieces [{id, group, title, summary, scope?, needs?, criteria [{id, text}]}], tasks [{id, pieces, role, agent, title, after?}]; replace: true starts over.',
+  'piece — upsert pieces; a change to summary, scope or criteria raises the version, and an accepted piece then needs re-acceptance. task — upsert tasks.',
+  'ask — id, piece, text, owner. answer — id, text. check — piece, results [{criterion, pass, evidence}], only after you verified it yourself.',
+  'block — id, piece, reason, owner, for a blocker outside any run. unblock — id. get — id of a piece, or none for the whole blueprint.',
+  "A piece is an outcome ('搜索性能达标'), not an activity ('压测'); group pieces by what the requirement is made of, 3–9 in all. owner is user only when the person's move is next: an access, a rule, a decision, an authorization; anything an agent or you can fix is agent.",
+  'The answer is one line: rev · change · 可开工 · 需关注.',
+].join('\n')
+const PIECE_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    group: { type: 'string' },
+    title: { type: 'string', description: 'An outcome, in the words the person uses' },
+    summary: { type: 'string', description: 'One line on what it is' },
+    scope: { type: 'string', description: 'What it includes and what it leaves out' },
+    needs: { type: 'array', items: { type: 'string' }, description: 'Pieces that must be accepted first' },
+    criteria: {
+      type: 'array',
+      items: { type: 'object', properties: { id: { type: 'string' }, text: { type: 'string' } }, required: ['id', 'text'] },
+    },
+  },
+  required: ['id'],
+}
+const TASK_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    pieces: { type: 'array', items: { type: 'string' } },
+    role: { type: 'string', description: '实现, 审查, 验收, 排查…' },
+    agent: { type: 'string', enum: ['codex', 'pi', 'cursor'] },
+    title: { type: 'string', description: 'The run title, as passed to --title' },
+    after: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['id'],
+}
+const BLUEPRINT_SCHEMA = {
+  type: 'object',
+  properties: {
+    op: { type: 'string', enum: ['plan', 'piece', 'task', 'ask', 'answer', 'check', 'block', 'unblock', 'get'] },
+    goal: { type: 'object', properties: { title: { type: 'string' }, summary: { type: 'string' } }, required: ['title'] },
+    groups: {
+      type: 'array',
+      items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' } }, required: ['id', 'title'] },
+    },
+    pieces: { type: 'array', items: PIECE_SCHEMA },
+    tasks: { type: 'array', items: TASK_SCHEMA },
+    replace: { type: 'boolean' },
+    id: { type: 'string', description: 'The question or blocker, or the piece for get' },
+    piece: { type: 'string' },
+    text: { type: 'string' },
+    reason: { type: 'string' },
+    owner: { type: 'string', enum: ['user', 'agent'] },
+    results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { criterion: { type: 'string' }, pass: { type: 'boolean' }, evidence: { type: 'string' } },
+        required: ['criterion', 'pass'],
+      },
+    },
+  },
+  required: ['op'],
+}
 
 // A finished run's files never change again, so it is read once per load.
 const finished = new Map<string, RunRow>()
@@ -74,6 +159,11 @@ let lastScan = 0
 let isWoken = false
 let lastStatus: string | undefined
 let isPaneHeld = false
+// The blueprint log as last read or written, and the session it belongs to.
+let logLines: string[] = []
+let logSession = ''
+// Blueprint calls run one at a time: two in one model turn must not interleave their writes.
+let blueprintChain: Promise<unknown> = Promise.resolve()
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
 const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null)
@@ -356,6 +446,7 @@ async function loadRow($: EngineInterface, root: string, name: string, sessionId
     liveText: text(meta.live_text),
     runnerPid: pidOf(meta.runner_pid),
     handoffFile: text(meta.handoff_file),
+    task: text(meta.task).trim() || null,
   }
   if (ACTIVE.has(row.status)) {
     const log = await progressLog($, dir)
@@ -595,18 +686,74 @@ async function openRun($: EngineInterface, run: RunRow) {
   await loadDetail($, run)
 }
 
+async function sessionHome($: EngineInterface) {
+  return { home: (await $.env.get('HOME')) ?? '', session: await $.session.id() }
+}
+
+// The log is the truth and the atom what the panes draw from; a reload or a resume replays the log.
+async function loadBlueprint($: EngineInterface) {
+  const { home, session } = await sessionHome($)
+  if (!home) return
+  logLines = await readLog($, blueprintPaths(home, session).log)
+  logSession = session
+  const replayed: Blueprint | null = replay(logLines)
+  await update($, blueprint, () => replayed)
+}
+
+function serialize<T>(work: () => Promise<T>): Promise<T> {
+  const run = blueprintChain.then(work, work)
+  blueprintChain = run.catch(() => undefined)
+
+  return run
+}
+
+// One blueprint call: refuse what does not apply, else log it, then answer in one line.
+async function blueprintCall($: EngineInterface, input: Record<string, unknown>): Promise<{ result: string } | { deny: string }> {
+  try {
+    const { home, session } = await sessionHome($)
+    if (!home) return { deny: '读不到 HOME，拼图没有写入' }
+    if (logSession !== session) await loadBlueprint($)
+    const op = parseOp(input)
+    const prior = await read($, blueprint)
+    const now = await $.clock.now()
+    if (op.op === 'get') {
+      if (!prior) return { deny: '本会话还没有拼图，先用 plan 建立' }
+
+      return { result: describe(derive(prior, await read($, runs), now), op.id) }
+    }
+    const { next, change } = apply(prior, op, now)
+    const lines = [...logLines, JSON.stringify({ rev: next.rev, at: now, ...op })]
+    await writeLog($, home, session, lines, next)
+    logLines = lines
+    await update($, blueprint, () => next)
+    isWoken = true
+
+    return { result: replyLine(derive(next, await read($, runs), now), change) }
+  } catch (error) {
+    if (isRefusal(error)) return { deny: `${error.message}；没有写入` }
+
+    return { deny: `拼图没有写入：${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'delegate-runs',
       description: '打开子 Agent 面板：delegate-cli 派发的 Codex/Pi/Cursor 运行、结果与实时过程',
     })
+    await $.tool.register({ name: 'blueprint', description: BLUEPRINT_DESCRIPTION, inputSchema: BLUEPRINT_SCHEMA })
     await update($, stopArm, () => null)
+    await loadBlueprint($).catch(() => undefined)
     $.clock.every(TICK_MS, () => void refresh($).catch(() => undefined))
     void reopen($).catch(() => undefined)
 
     return next(e)
   })
+
+  on('tool.call', { tool: 'mcp__delegate-cli-panel__blueprint' }, async ($, e) =>
+    serialize(() => blueprintCall($, e as unknown as Record<string, unknown>)),
+  ).catch(() => ({ deny: '拼图工具出错，没有写入' }))
 
   on('command.run', { command: 'delegate-runs' }, async $ => {
     await update($, dismissed, () => false)
@@ -627,11 +774,21 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // A dispatch through run_cli.py: rescan on the next tick instead of waiting idle.
-  on('tool.call', { tool: 'Bash' }, ($, e, next) => {
-    if (/run_cli\.py['"]?\s+run\b/.test(e.command)) isWoken = true
+  // A dispatch through run_cli.py: rescan on the next tick instead of waiting idle, remember
+  // which blueprint task it names, and tell Claude alone when it names none.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    if (!RUN_CALL.test(e.command)) return next(e)
+    isWoken = true
+    const task = TASK_FLAG.exec(e.command)?.[2]
+    if (task) {
+      await update($, dispatches, map => Object.fromEntries([...Object.entries(map), [e.tool_use_id, task]].slice(-200)))
 
-    return next(e)
+      return next(e)
+    }
+    const result = await next(e)
+    if (result.deny !== undefined || !(await read($, blueprint))) return result
+
+    return { ...result, context: [...(result.context ?? []), UNTRACKED_RUN] }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
