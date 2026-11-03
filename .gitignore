@@ -4,3 +4,4 @@ __pycache__/
 **/.claude-plugin/types/
 runs/
 !*.json
+/ik.md

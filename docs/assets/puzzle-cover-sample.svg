@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 412 218" width="412" height="218" role="img">
+<title>需求拼图封面示意：凸起与凹口只出现在有真实关系的相邻块之间</title>
+<style>
+:root{--ink:#2c2c2a;--muted:#5f5e5a;--line:#b4b2a9;--done:#eaf3de;--done-g:#3b6d11;--run:#faece7;--run-g:#d85a30;--check:#e6f1fb;--check-g:#185fa5;--wait:#f1efe8;--wait-g:#888780;--block:#fcebeb;--block-g:#a32d2d;--gap-g:#888780}
+@media (prefers-color-scheme: dark){:root{--ink:#f1efe8;--muted:#b4b2a9;--line:#5f5e5a;--done:#27500a;--done-g:#97c459;--run:#712b13;--run-g:#f0997b;--check:#0c447c;--check-g:#85b7eb;--wait:#444441;--wait-g:#b4b2a9;--block:#791f1f;--block-g:#f09595;--gap-g:#b4b2a9}}
+.pc path{stroke:var(--line);stroke-width:1.2;transition:filter .18s,stroke .18s}
+.pc text{text-anchor:middle;dominant-baseline:central;font-family:-apple-system,"PingFang SC",sans-serif;pointer-events:none}
+.pc .n{font-size:13px;fill:var(--ink)} .pc .s{font-size:11px;fill:var(--muted)}
+.done path{fill:var(--done)} .run path{fill:var(--run)} .check path{fill:var(--check)} .wait path{fill:var(--wait)} .block path{fill:var(--block)}
+.gap path{fill:none;stroke-dasharray:5 4}
+.done:hover path{stroke:var(--done-g);filter:drop-shadow(0 0 6px var(--done-g))}
+.run:hover path{stroke:var(--run-g);filter:drop-shadow(0 0 6px var(--run-g))}
+.check:hover path{stroke:var(--check-g);filter:drop-shadow(0 0 6px var(--check-g))}
+.wait:hover path{stroke:var(--wait-g);filter:drop-shadow(0 0 4px var(--wait-g))}
+.block:hover path{stroke:var(--block-g);filter:drop-shadow(0 0 6px var(--block-g))}
+.gap:hover path{stroke:var(--gap-g)}
+</style>
+<g class="pc done"><title>R1 搜索接口 · 已验收 3/3 · Codex 实现、Cursor 审查</title><path d="M14 16 L130 16 L130 41.9 A11.1 11.1 0 0 1 130 64.1 L130 90 L83.1 90 A11.1 11.1 0 0 1 60.9 90 L14 90 Z"></path><text x="72.0" y="44.0" class="n">R1 搜索接口</text><text x="72.0" y="64.0" class="s">◆ 已验收 3/3</text></g><g class="pc run"><title>R2 结果排序 · 进行中 · Codex 第 2 次运行 · 正在执行 npm test</title><path d="M148 16 L264 16 L264 41.9 A11.1 11.1 0 0 1 264 64.1 L264 90 L148 90 L148 64.1 A11.1 11.1 0 0 0 148 41.9 Z"><animate attributeName="opacity" values="1;0.55;1" dur="2s" repeatCount="indefinite"/></path><text x="206.0" y="44.0" class="n">R2 结果排序</text><text x="206.0" y="64.0" class="s">◐ 进行中</text></g><g class="pc wait"><title>R3 搜索页面 · 等待前置 · 需要 R2</title><path d="M282 16 L398 16 L398 90 L351.1 90 A11.1 11.1 0 0 1 328.9 90 L282 90 L282 64.1 A11.1 11.1 0 0 0 282 41.9 Z"></path><text x="340.0" y="44.0" class="n">R3 搜索页面</text><text x="340.0" y="64.0" class="s">○ 等待前置</text></g><g class="pc check"><title>R4 搜索埋点 · 待验收 0/2 · Pi 实现已结束</title><path d="M14 112 L60.9 112 A11.1 11.1 0 0 0 83.1 112 L130 112 L130 186 L14 186 Z"></path><text x="72.0" y="140.0" class="n">R4 搜索埋点</text><text x="72.0" y="160.0" class="s">◇ 待验收 0/2</text></g><g class="pc block"><title>R6 性能压测 · 受阻 · 缺测试数据库账号</title><path d="M148 112 L264 112 L264 186 L148 186 Z"></path><text x="206.0" y="140.0" class="n">R6 性能压测</text><text x="206.0" y="160.0" class="s">✗ 受阻</text></g><g class="pc gap"><title>R5 空结果推荐 · 待澄清 · 无结果时推荐什么？</title><path d="M282 112 L328.9 112 A11.1 11.1 0 0 0 351.1 112 L398 112 L398 186 L282 186 Z"></path><text x="340.0" y="140.0" class="n">R5 空结果推荐</text><text x="340.0" y="160.0" class="s">⬚ 待澄清</text></g>
+<text x="206.0" y="208" style="font-size:11px;fill:var(--muted);text-anchor:middle;font-family:-apple-system,'PingFang SC',sans-serif">悬停发光 · 进行中呼吸 · 原生提示框；凹凸 = 相邻块之间的依赖或接口</text>
+</svg>
