@@ -138,6 +138,7 @@ class RunnerTests(unittest.TestCase):
         self.assertIn(b'Delegated subtask:', task)
         self.assertIsNone(meta['activity'])
         self.assertEqual(meta['live_text'], '')
+        self.assertIsNone(meta['task'])
         expected = '- `a.txt` 有两行，分别是 `alpha` 和 `beta`。\n- `b.txt` 只有一行，内容是 `gamma`。\n- 两个文件都是纯文本，每行一个英文单词。\n\n完成\n'
         self.assertEqual(Path(meta['result_file']).read_text(), expected)
         log = Path(meta['progress_file']).read_text()
@@ -148,6 +149,27 @@ class RunnerTests(unittest.TestCase):
         output, meta = self.run_offline(extra=['--quiet', '--title', '指定'])
         self.assertEqual(len(output.splitlines()), 2)
         self.assertEqual(meta['title'], '指定')
+
+    def test_task_recorded_and_kept_on_resume(self):
+        _, first = self.run_offline(extra=['--quiet', '--task', ' T2 '])
+        self.assertEqual(first['task'], 'T2')
+        saved = json.loads((Path(first['run_dir']) / 'run.json').read_text())
+        self.assertEqual(saved['task'], 'T2')
+        _, resumed = self.run_offline(extra=['--quiet', '--resume-from', str(Path(first['run_dir']) / 'run.json')])
+        self.assertEqual(resumed['task'], 'T2')
+        self.assertNotEqual(resumed['run_dir'], first['run_dir'])
+        _, moved = self.run_offline(extra=['--quiet', '--task', 'T3', '--resume-from', str(Path(resumed['run_dir']) / 'run.json')])
+        self.assertEqual(moved['task'], 'T3')
+
+    def test_bad_task_is_blocked_before_a_run_directory(self):
+        result = subprocess.run(self.command(extra=['--task', 'T2; rm -rf /']), env=self.env,
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        blocked = json.loads(result.stdout.splitlines()[-1])
+        self.assertEqual(blocked['status'], 'blocked')
+        self.assertIn('--task', blocked['error'])
+        self.assertEqual(blocked['task'], 'T2; rm -rf /')
+        self.assertFalse((self.root / 'jobs').exists())
 
     def test_cursor_activity_and_partial_replay(self):
         progress, meta = self.progress('cursor')

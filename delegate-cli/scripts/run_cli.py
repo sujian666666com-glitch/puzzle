@@ -26,6 +26,8 @@ MODEL_LIST_ARGS = {'codex': ['debug', 'models'], 'pi': ['--list-models'], 'curso
 SKILL_DIR = Path(__file__).resolve().parent.parent
 EFFORTS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
 SESSION_ID = re.compile(r'[A-Za-z0-9_-]+')
+# A blueprint task ID as the panel's blueprint tool assigns it (T1, T2-review).
+TASK_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}')
 # Known refusals that are environment preconditions, not code failures.
 BLOCKERS = (
     ('Workspace Trust Required', 'Cursor workspace is not trusted; add --cursor-trust approved '
@@ -460,6 +462,10 @@ def run_job(args):
             raise ValueError('Resume must use the same agent and canonical working directory')
         if previous.get('status') in ('running', 'preparing', 'planned'):
             raise ValueError('Prior run has not finished; inspect its background task first')
+    # A resumed run stays on its task unless the caller names another.
+    task_id = (args.task or '').strip() or (previous or {}).get('task') or None
+    if task_id is not None and not TASK_ID.fullmatch(task_id):
+        raise ValueError('--task must be 1-64 letters, digits, dots, underscores or hyphens')
     info = inspect_cli(args.agent, str(cwd))
     if not info['available']:
         raise RuntimeError(info['error'])
@@ -476,7 +482,7 @@ def run_job(args):
     handoff_path = run_dir / 'handoff.md'
     handoff_path.write_bytes(handoff_bytes)
     meta = {'agent': args.agent, 'cwd': str(cwd), 'run_dir': str(run_dir),
-            'title': title, 'goal': goal, 'handoff_file': str(handoff_path),
+            'title': title, 'goal': goal, 'task': task_id, 'handoff_file': str(handoff_path),
             'activity': None, 'live_text': '',
             'version': info['version'], 'argv': None, 'access': args.access,
             'requested_model': args.model, 'requested_thinking': args.thinking,
@@ -653,6 +659,7 @@ def main():
     run.add_argument('--cwd', required=True)
     run.add_argument('--prompt-file', required=True)
     run.add_argument('--title', help='Task title; defaults to the handoff goal or first nonempty line')
+    run.add_argument('--task', help='Blueprint task ID this run works on; a resumed run keeps the prior one')
     run.add_argument('--access', choices=['read', 'write'], default='read')
     run.add_argument('--model', help='Exact ID or an alias from models.json (astra, grok4.7, flash)')
     run.add_argument('--thinking', help='low/medium/high/xhigh/max or 低/中/高/超高/最高')
@@ -735,7 +742,11 @@ def main():
             raise ValueError('--timeout must be positive')
         return run_job(args)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
-        emit({'status': 'blocked', 'error': str(error), 'verified': False})
+        blocked = {'status': 'blocked', 'error': str(error), 'verified': False}
+        # A dispatch refused before it had a run directory still names its task.
+        if getattr(args, 'task', None):
+            blocked['task'] = args.task.strip()
+        emit(blocked)
         return 2
 
 
