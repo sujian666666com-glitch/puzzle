@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Run one Codex/Pi/Cursor job; keep transport status separate from task verification.
 
-Python 3.9+, macOS/Linux/WSL/native Windows. No API keys or third-party Python packages needed.
+Python 3.9+, macOS/Linux/WSL. No API keys or third-party Python packages needed.
 """
 import argparse
 import difflib
+import fcntl
 import hashlib
 import json
 import os
@@ -18,16 +19,6 @@ import tempfile
 import time
 import shlex
 from progress import Progress, cursor_partial
-
-WINDOWS = os.name == 'nt'
-if WINDOWS:
-    import msvcrt
-    # The host reads this output as UTF-8; the console code page cannot encode every model reply.
-    # newline='\n' keeps a CRLF handoff from being written as CR CR LF.
-    for stream in (sys.stdout, sys.stderr):
-        stream.reconfigure(encoding='utf-8', errors='replace', newline='\n')
-else:
-    import fcntl
 
 AGENTS = ('codex', 'pi', 'cursor')
 EXECUTABLES = {'codex': 'codex', 'pi': 'pi', 'cursor': 'cursor-agent'}
@@ -45,25 +36,6 @@ BLOCKERS = (
 )
 
 
-def acquire_lock(lock, exclusive):
-    """Non-blocking lock; raises BlockingIOError when another job holds it.
-
-    Windows has no shared lock, so a read job only probes for an active writer
-    (lock then release) and keeps the file open without holding the lock.
-    """
-    if not WINDOWS:
-        fcntl.flock(lock, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
-        return
-    lock.seek(0)
-    try:
-        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-    except OSError as error:
-        raise BlockingIOError(str(error)) from error
-    if not exclusive:
-        lock.seek(0)
-        msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
-
-
 def emit(value):
     print(json.dumps(value, ensure_ascii=False), flush=True)
 
@@ -71,13 +43,6 @@ def emit(value):
 def save(path, value):
     temp = path.with_suffix('.tmp')
     temp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    # Windows refuses to replace a file another process (panel, watch) has open; readers close quickly.
-    for _ in range(40 if WINDOWS else 0):
-        try:
-            temp.replace(path)
-            return
-        except PermissionError:
-            time.sleep(0.025)
     temp.replace(path)
 
 
@@ -274,8 +239,6 @@ def build_command(args, info, run_dir, previous, plan):
         require_flags(info['exec_help'], flags + (['--skip-git-repo-check'] if args.skip_git_check else []))
         command += ['exec', '--sandbox', 'read-only' if args.access == 'read' else 'workspace-write',
                     '-c', 'approval_policy="never"', '--json',
-                    # The elevated Windows sandbox conflicts with the desktop node_repl (os error 32).
-                    *(['-c', 'windows.sandbox="unelevated"'] if WINDOWS else []),
                     '--output-last-message', str(run_dir / 'result.md')]
         if args.skip_git_check:
             command += ['--skip-git-repo-check']
@@ -443,24 +406,12 @@ def explain_failure(meta, run_dir, cause):
         if hit:
             meta.update(status='blocked', error=hint, error_detail=hit[:500])
             return
-    if cause and lines:
-        meta['error'] = lines[0][:500]
-    elif lines:
-        # A multi-line JSON body ends in `}`; keep the message from the line that opened it.
-        start = len(lines) - 1
-        while start > 0 and lines[start][:1] in '{}[]"':
-            start -= 1
-        meta['error'] = ' '.join(lines[start:])[:500]
+    if lines:
+        meta['error'] = lines[0][:500] if cause else lines[-1][:500]
 
 
 def stop_process_group(process):
     # This runner owns a fresh process group, including ordinary CLI children.
-    if WINDOWS:
-        # taskkill /T terminates the whole child tree (cmd shims, node, sandbox helpers).
-        subprocess.run(['taskkill', '/T', '/F', '/PID', str(process.pid)],
-                       capture_output=True)
-        process.wait()
-        return
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -521,8 +472,7 @@ def run_job(args):
               'session_id and include Agent-Session: ' + args.agent + ':<session_id> and '
               'Agent-Run: ' + args.agent + ':' + run_dir.name + ' as Git trailers. '
               'Never invent an ID. This does not authorize committing.\n\n' + prompt)
-    # Bytes, not text: Windows text mode would turn the handoff's CRLF into CR CR LF on the agent's stdin.
-    (run_dir / 'task.md').write_bytes(prompt.encode('utf-8'))
+    (run_dir / 'task.md').write_text(prompt, encoding='utf-8')
     handoff_path = run_dir / 'handoff.md'
     handoff_path.write_bytes(handoff_bytes)
     meta = {'agent': args.agent, 'cwd': str(cwd), 'run_dir': str(run_dir),
@@ -568,17 +518,17 @@ def run_job(args):
     # Read jobs share a checkout; write jobs require exclusive ownership.
     lock_root = Path.home() / '.claude' / 'cli-runs' / '.locks'
     lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    lock_specs = [('cwd:' + str(cwd), args.access != 'read')]
+    lock_specs = [('cwd:' + str(cwd), fcntl.LOCK_SH if args.access == 'read' else fcntl.LOCK_EX)]
     if previous:
         session_key = meta['session_file'] if args.agent == 'pi' else meta['session_id']
-        lock_specs.append(('session:' + args.agent + ':' + str(session_key), True))
+        lock_specs.append(('session:' + args.agent + ':' + str(session_key), fcntl.LOCK_EX))
     locks = []
     try:
-        for key, exclusive in lock_specs:
+        for key, mode in lock_specs:
             lock_key = hashlib.sha256(key.encode()).hexdigest()
             lock = (lock_root / (lock_key + '.lock')).open('a')
             locks.append(lock)
-            acquire_lock(lock, exclusive)
+            fcntl.flock(lock, mode | fcntl.LOCK_NB)
     except BlockingIOError:
         meta.update(status='blocked', finished_at=time.time(),
                     error='Conflicting job owns this checkout or session; wait or use another worktree/session')
@@ -606,9 +556,8 @@ def run_job(args):
     try:
         with (run_dir / 'task.md').open('rb') as task, out_path.open('wb') as stdout, \
                 (run_dir / 'stderr.log').open('wb') as stderr:
-            process = subprocess.Popen(command, cwd=str(cwd), stdin=task, stdout=stdout, stderr=stderr,
-                                       **({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
-                                          if WINDOWS else {'start_new_session': True}))
+            process = subprocess.Popen(command, cwd=str(cwd), stdin=task, stdout=stdout,
+                                       stderr=stderr, start_new_session=True)
             meta.update(status='running', pid=process.pid, runner_pid=os.getpid())
             save(meta_path, meta)
             emit({'status': 'running', 'run_file': str(meta_path), 'pid': process.pid,
@@ -620,15 +569,11 @@ def run_job(args):
                 progress.echo_on()  # First line stays JSON; the last line is the final JSON.
             try:
                 deadline = time.monotonic() + args.timeout
-                # The panel's stop on Windows, where no catchable signal reaches this runner.
-                stop_request = run_dir / 'stop.request'
                 while True:
                     progress.poll()
                     save(meta_path, meta)
                     if process.poll() is not None:
                         break
-                    if stop_request.exists():
-                        raise InterruptedError('stop.request')
                     if time.monotonic() >= deadline:
                         raise subprocess.TimeoutExpired(command, args.timeout)
                     time.sleep(0.25)

@@ -15,7 +15,7 @@ description: 让 Claude Code 通过本机 Codex CLI、Pi coding agent 与 Cursor
 python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" doctor --cwd "/绝对/项目路径"
 ```
 
-从 Skill 的实际加载目录定位脚本；旧版 Claude 未替换上述变量时，使用加载位置的绝对路径。需要 Python 3.9+，支持 macOS/Linux/WSL/原生 Windows；Windows 上 `python3` 可能是应用商店占位程序，改用 `python`。缺少某个 CLI 时使用可用者。
+从 Skill 的实际加载目录定位脚本；旧版 Claude 未替换上述变量时，使用加载位置的绝对路径。需要 Python 3.9+ 和 macOS/Linux/WSL。缺少某个 CLI 时使用可用者。
 
 - 以本机 `--help` 为准；不自动安装、升级 CLI，不改模型、代理、认证配置。
 - 子进程不会获得 Claude 的对话、权限、MCP、Skill 或浏览器状态；必要信息写进任务文件，需要的工具另行核实。
