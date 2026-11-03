@@ -39,6 +39,26 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" doctor --cwd "/绝对/项目路
 
 启动 worktree 前检查 `git status` 和基准提交。未提交改动不会进入新 worktree：先明确哪些是输入，复制选定改动或改为串行，保留用户工作。依赖安装、端口、数据库和外部账号也要分开或协调。子任务运行时，主控不修改其文件或同一 Git 工作区状态。
 
+### 需求拼图（装了 `delegate-cli-panel` 时）
+
+每次委派前先建拼图，委派过程中持续维护。用面板注册的 `mcp__delegate-cli-panel__blueprint` 工具；它不在工具列表里时，用 ToolSearch 的 `select:mcp__delegate-cli-panel__blueprint` 加载。块的状态由面板根据拼图和 `run.json` 推导，不要手写。
+
+- **先说清需求，再 `plan`**：
+  - 写一句目标；
+  - 按需求的组成分组（如“搜索能力 / 搜索体验 / 质量与数据”），一个目标 3～9 块；
+  - 每块写成“应该成立的结果”（如“搜索性能达标”），不写成活动（如“压测”），并至少给一条能判定的验收条件；
+  - 实现、审查、验收是块下面的任务（`tasks`：所属块、角色、Agent，任务名与 `--title` 一致）。
+- **ID 由你定，定了不改**：块 R1、分组 G1、任务 T1、问题 Q1、阻碍 B1。编号只在工具和日志里用，界面不显示。
+- **派发带 `--task <任务 ID>`**：同一任务续接、重试仍用原任务（续接不传 `--task` 会沿用上次的）；新增工作先用 `task` 加任务，再派发。
+- **验收后 `check`**：逐条记过或不过，附上证据（测试命令、截图路径、运行目录）。CLI 正常结束只算“待验收”。
+- **只有轮到用户动手的事才标 `owner: user`**：
+  - 这类事包括缺权限或账号、需要用户明确规则、要用户在方案间做决定、需要用户授权（目录信任、提交）；用 `ask` 记问题、`block` 记阻碍，解决后 `answer` / `unblock`。
+  - Agent 或你自己能处理的（失败的测试、锁冲突、写错的模型名、临时网络问题）标 `owner: agent`，或干脆不记。
+  - 反复处理不掉、需要用户拿主意时，再明确转成 `owner: user` 的问题。
+- **需求修订**：用 `piece` 改说明或验收条件；已验收的块会转为“需复验”。
+- **工具每次只回一行**（rev · 变化 · 可开工 · 需关注）；要细节就用 `get`，传某块的 ID 看这一块，不传看整份。
+- **没装面板时**：不维护拼图，只在聊天里给一份文字清单，写明分组、每块名称与状态、需要用户处理的事。
+
 ## 3. 写清交接
 
 每个任务一个 UTF-8 任务文件。使用 Write 工具或带引号的 heredoc，禁止把任务文本拼进 shell 命令。
@@ -62,12 +82,13 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" doctor --cwd "/绝对/项目路
 python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" run \
   --agent codex --cwd "/绝对/项目或worktree" \
   --prompt-file "/绝对/任务文件.md" --access write \
-  --title "审查 runner 改动" --model astra --thinking 中
+  --title "审查 runner 改动" --task T3 --model astra --thinking 中
 ```
 
 `--agent` 取 `codex`、`pi`、`cursor`；`--access read|write`。任务文件必须已存在。
 
 - **任务名**：每次派发都传 `--title`，10～20 字说清做什么（如“审查 runner 改动”“补面板停止按钮”）。它就是面板卡片标题和后台任务名，不传时取交接里「目标：」那一行。
+- **拼图任务**：有拼图时每次派发都传 `--task`（见第 2 节），面板据此把这次运行挂到对应的块上。续接不传时沿用上次的任务；ID 不合法会在启动前 `blocked`，这行 JSON 里也带着 `task`。
 - **模型**：用户说的简称原样传，脚本按 skill 根目录的 `models.json` 解析，并在启动前用 CLI 自带的模型列表校验（`astra`→`gpt-6-astra`，`flash`→`deepseek/deepseek-flash`，`grok4.7`+`中`→`grok-4.7-medium`）。写错会立即 `blocked` 并给出候选，不会白跑。不传时用 `models.json` 的 `defaults`（目前只给 Cursor 配了 `grok-4.7-medium`），再没有就用 CLI 自己配置的默认模型；用户的"老样子"写进 `models.json`，三家都生效。Cursor 的思考档按同一模型族换档（没有的档位会报错并列出可用档），带方括号参数的 ID 原样放行。
 - **Cursor**：read 用 `--mode ask`，write 用 `--force`（执行命令，且隐含信任目录）。只读任务遇到未信任目录会 `blocked`；只有用户授权信任该目录时才加 `--cursor-trust approved`。
 - **Pi**：read 只选读取工具并在支持时关闭内置 MCP，保留扩展；尚未信任的项目资源用 `--pi-trust existing|skip|approved`（默认沿用已有信任；`skip` 对应 `--no-approve`，`approved` 对应一次性 `--approve`）。
@@ -97,7 +118,9 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" run \
 ## 6. 收回、纠错、验收
 
 - 等后台任务真正结束，再读 `run.json` 和 `result.md`。先读摘要；需要定位问题时再检索日志，避免整份事件流挤进主控上下文。
-- `process_succeeded` 只表示 CLI 正常完成，`verified: false` 要由主控实际检查。审查 diff、核实文件范围并运行所需集成/端到端验证后，才能报告任务完成。
+- `process_succeeded` 只表示 CLI 正常完成，`verified: false` 要由主控实际检查。审查 diff、核实文件范围并运行所需集成/端到端验证后，才能报告任务完成。有拼图时：
+  - 用 `blueprint check` 记下验收结论和证据；
+  - 受阻和失败按“下一步该谁动手”处理：要用户处理的，用 `block` 或 `ask` 标 `owner: user`；其余自己续接或重派。
 - `blocked`、`failed`、`timed_out`、`cancelled`、`planned`（dry-run）都不能当作成功。`blocked` 的 `error` 是前置条件提示（模型、目录信任、非 Git、锁冲突），`error_detail` 保留 CLI 原文；`failed` 的 `error` 是 CLI 给出的真实原因。启动前的校验失败（模型名、`models.json`、CLI 不可用）只输出一行 blocked JSON，不建运行目录。先区分参数/版本、模型、认证/额度、网络、沙箱、项目配置和代码问题。
 - 对临时网络问题，先检查已有改动和进程状态，再续接原会话；不要盲目重跑写入任务。保留有用产物。用户在面板里停止的运行是 `cancelled`，同样不算成功：先看已经产生的改动，再决定续接还是重派。
 - 用户说“用 delegate-cli 续接这次运行（<运行目录名>）：<要求>”时，读 `~/.claude/cli-runs/<运行目录名>/run.json`，把要求写成新的任务文件，用同一 Agent、同一 `cwd` 和 `--resume-from` 续接。

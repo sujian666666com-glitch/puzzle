@@ -31,7 +31,7 @@
 
 传了 `--model`（Cursor 总是）时，脚本先按 `models.json` 解析简称和中文思考强度，再用 `codex debug models`、`pi --list-models`、`cursor-agent models` 校验；列表取不到时只做别名替换，并在 `run.json` 的 `model_check` 里写明。结果另记 `claude_session_id`（派发它的 Claude 会话，面板据此筛选）、`usage`（token 用量）和 `watch_command`。
 
-`run.json` 还记 `title`（任务名，来自 `--title`，不传时取「目标：」行，超过 40 字截断）、`goal`（交接里的「目标：」行）、`handoff_file`（交接原文 `handoff.md` 的绝对路径）、`activity`（`{kind: thinking|tool|writing|waiting, label, since}`，结束置 null）和 `live_text`（Cursor 尚未成段的逐字文本，其他 Agent 恒为 `""`）。运行目录里 `task.md` 是实际发送给 CLI 的全文（前面有 runner 加的两段说明），`handoff.md` 是主控写的交接原文，不要混用。
+`run.json` 还记 `title`（任务名，来自 `--title`，不传时取「目标：」行，超过 40 字截断）、`goal`（交接里的「目标：」行）、`task`（需求拼图的任务 ID，来自 `--task`；续接不传时沿用上次的，都没有为 null）、`handoff_file`（交接原文 `handoff.md` 的绝对路径）、`activity`（`{kind: thinking|tool|writing|waiting, label, since}`，结束置 null）和 `live_text`（Cursor 尚未成段的逐字文本，其他 Agent 恒为 `""`）。运行目录里 `task.md` 是实际发送给 CLI 的全文（前面有 runner 加的两段说明），`handoff.md` 是主控写的交接原文，不要混用。启动前校验失败时只输出一行 blocked JSON，传了 `--task` 的，这行也带 `task`。
 
 脚本保留进程退出状态、会话指针和结果；不会自动做 Git 合并、安装依赖、提交或部署。这些决定留给掌握上下文的 Claude。结果里的 `verified` 始终为 false，避免把外部 Agent 的“完成”当成主控验收。
 
@@ -47,7 +47,23 @@
 - 运行中可「停止」（先变成“确认停止”，再校验 `runner_pid` 是 `run_cli.py` 后发 SIGTERM，状态由 runner 记为 `cancelled`）和「追问」（把“用 delegate-cli 续接这次运行（<运行目录名>）：”填进输入框）。
 - 超过 3 分钟没写日志的 running/preparing 运行标为“可能已中断”。
 - 本会话有新运行启动时尝试打开 pane，底部状态栏同时显示“子 Agent 运行中”。定时器发起的打开属于“非主动请求”，界面不够宽时 App 会先挂起不显示，此时状态栏会提示 `/delegate-runs`；该命令是主动请求，打不开时会直接报出 App 给的原因。pane 由 App 决定落位，mod 不能插进 App 内置的会话信息列表。
-- 除「停止」向 runner 发 SIGTERM 外不改变任何状态：不调用模型、不改运行记录。旧版 runner 产生的记录没有 `claude_session_id`，只在“近 24 小时”里出现。
+- 除「停止」向 runner 发 SIGTERM、`blueprint` 工具写拼图日志外，不改变任何状态：不调用模型、不改运行记录。旧版 runner 产生的记录没有 `claude_session_id`，只在“近 24 小时”里出现。
+
+### 需求拼图（`blueprint` 工具）
+
+面板注册一个工具 `mcp__delegate-cli-panel__blueprint`，默认放在 ToolSearch 后面，Claude 用它维护本会话的需求拼图。用法约定见 SKILL 第 2 节。
+
+- **写入**：
+  - 每次调用记一行只追加的操作日志 `~/.claude/cli-runs/blueprints/<会话ID>.jsonl`，同时更新快照 `<会话ID>.json`；
+  - 两份都是先写临时文件再改名替换；
+  - 会话恢复或插件重载时，从日志重放；
+  - 面板扫描运行目录时只认运行目录名，不会把 `blueprints/` 当成运行。
+- **操作**：`plan`、`piece`、`task`、`ask`、`answer`、`check`、`block`、`unblock`、`get`。不合法的调用（未知块、前置成环、ID 重复、缺字段）会被拒绝并说明原因，不写入。
+- **推导**：块的状态由拼图和本会话运行的 `run.json`（按 `task` 对上）推导，优先级是：已验收、需复验、受阻、需修复、进行中、待核实、待验收、待澄清、等待前置、未开始。
+  - “需关注”只算标了 `owner: user` 的未答问题和阻碍，再加上需要用户处理的运行失败（目录信任、登录认证、额度）；
+  - 其余失败归 Agent 和 Claude 处理。
+- **回复**：一行 `rev · 变化 · 可开工 · 需关注 N 项`；`get` 返回带 ID 的紧凑文本。
+- **提醒**：本会话已有拼图、但 `run_cli.py run` 没带 `--task` 时，面板在这次 Bash 结果后附一条只有 Claude 能看到的提醒。
 
 安装方式见插件目录里的 `README.md`。CLI 使用的 MCP 和桌面端内置插件不是自动共享关系，面板与 GUI 验收互不依赖。
 
