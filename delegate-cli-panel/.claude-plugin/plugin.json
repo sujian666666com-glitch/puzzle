@@ -1,6 +1,6 @@
 {
   "name": "delegate-cli-panel",
-  "version": "0.3.0",
-  "description": "子 Agent 面板：按任务名列出 delegate-cli 派发的运行，查看任务、实时过程与结果，并可停止或追问",
+  "version": "0.4.0",
+  "description": "子 Agent 面板：按任务名列出 delegate-cli 派发的运行，查看任务、实时过程与结果，并可停止或追问；提供 blueprint 工具维护需求拼图",
   "types": "./types/index.d.ts"
 }

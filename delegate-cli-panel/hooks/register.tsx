@@ -15,7 +15,7 @@ import {
   writeLog,
 } from './blueprint'
 
-const VERSION = '0.3.0'
+const VERSION = '0.4.0'
 const PANE = 'delegate-agents'
 const TITLE = '子 Agent'
 // One second, so an open live run can tick its status line. Other gaps skip ticks.

@@ -224,7 +224,7 @@ test("lists this session's runs as cards, opens itself, and shows a run's live l
     expect(await ui.find({ type: 'Text', text: /可能已中断/ })).toBeDefined()
     expect(await ui.find({ key: OTHER })).toBeUndefined()
     expect(await ui.find({ key: 'group-blog' })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: /delegate-cli-panel 0\.3\.0/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /delegate-cli-panel 0\.4\.0/ })).toBeDefined()
 
     await ui.press({ key: 'scope-all' })
     expect((await ui.find({ key: OTHER }))?.text).toMatch(/Codex · gpt-6-astra \/ medium · 可写 · 16:56 · 5 分 00 秒 · 31\.9k tok/)
