@@ -5,7 +5,7 @@
 | 目录 | 类型 | 作用 |
 |---|---|---|
 | `delegate-cli/` | Skill | 让 Claude 调度 Codex、Pi、Cursor：派发、续接、实时进度、验收 |
-| `delegate-cli-panel/` | 插件（函数钩子 mod） | 桌面 App 右侧「子 Agent」面板，配合 delegate-cli 查看任务、结果与实时过程 |
+| `delegate-cli-panel/` | 插件（函数钩子 mod） | 桌面 App 右侧的「子 Agent」和「需求拼图」两个面板：查看委派的任务、结果、实时过程，以及需求由哪些块组成、哪里要你处理 |
 
 两者只通过 `~/.claude/cli-runs/` 里的运行记录衔接：skill 单独可用，面板是可选的界面。暂时分开存放，以后需要一键安装时再合成一个插件。
 
@@ -15,12 +15,12 @@
 # Skill：让 Claude 从仓库加载
 ln -s ~/Desktop/jj/puzzle/delegate-cli ~/.claude/skills/delegate-cli
 
-# 面板插件：user 级安装，直接读取仓库目录
+# 面板插件：user 级安装，会把当前版本复制到插件缓存
 claude plugin marketplace add ~/Desktop/jj/puzzle/delegate-cli-panel
 claude plugin install delegate-cli-panel@delegate-cli-panel
 ```
 
-改 skill 后立即生效；改面板后在会话里执行 `/reload-plugins`。
+改 skill 后立即生效。面板加载的是安装时复制到 `~/.claude/plugins/cache/` 的那一版：改了面板，先把版本号加一，再更新安装并重开会话，步骤见 `delegate-cli-panel/README.md`。
 
 ## 测试
 

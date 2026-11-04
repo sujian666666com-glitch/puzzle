@@ -39,11 +39,12 @@
 
 ## 进度面板（delegate-cli-panel）
 
-面板是与本 skill 分开存放的 Claude Code 函数钩子插件 `delegate-cli-panel`（puzzle 仓库的 `delegate-cli-panel/` 目录）：在桌面 App 对话右侧停靠一个「子 Agent」pane，定时读取 `~/.claude/cli-runs/*/run.json` 与 `progress.log`（打开运行中的运行时每 1 秒，有运行中任务 2 秒，空闲约 10 秒）。
+面板是与本 skill 分开存放的 Claude Code 函数钩子插件 `delegate-cli-panel`（puzzle 仓库的 `delegate-cli-panel/` 目录）：在桌面 App 对话右侧停靠「子 Agent」和「需求拼图」两个 pane。「子 Agent」定时读取 `~/.claude/cli-runs/*/run.json` 与 `progress.log`（打开运行中的运行时每 1 秒，有运行中任务 2 秒，空闲约 10 秒）。
 
 - 只扫描默认目录 `~/.claude/cli-runs/` 里最近 7 天的运行（`--run-root` 改过目录的看不到）。默认列出本会话派发的运行（按 `claude_session_id` 匹配），可切到“近 24 小时”（按 `cwd` 最后一段分组）；运行中的排最前，其余按时间倒序。
 - 卡片以 `title` 命名（旧记录回退到交接里的「目标：」行），副信息是 Agent · 模型(/思考档) · 只读|可写 · 派发时刻 · 耗时 · token，失败的显示原因。
-- 点卡片进详情，分「任务 / 过程 / 结果」三页：「任务」渲染 `handoff.md`（旧记录用 `task.md` 去掉 runner 说明）。「过程」是实时日志，Agent 的话用 Markdown，工具调用压成一行；运行中底部有实时状态行（`activity`：正在思考 / 正在执行 xx / 正在写回复 / 等待模型 + 秒数），Cursor 的 `live_text` 以“输入中”气泡逐字出现。可复制 `watch` 命令。
+- 带拼图任务（`task`）的运行，详情里有一行「所属」，点块名打开需求拼图并选中那一块。
+- 点卡片标题进详情，分「任务 / 过程 / 结果」三页：「任务」渲染 `handoff.md`（旧记录用 `task.md` 去掉 runner 说明）。「过程」是实时日志，Agent 的话用 Markdown，工具调用压成一行；运行中底部有实时状态行（`activity`：正在思考 / 正在执行 xx / 正在写回复 / 等待模型 + 秒数），Cursor 的 `live_text` 以“输入中”气泡逐字出现。可复制 `watch` 命令。
 - 运行中可「停止」（先变成“确认停止”，再校验 `runner_pid` 是 `run_cli.py` 后发 SIGTERM，状态由 runner 记为 `cancelled`）和「追问」（把“用 delegate-cli 续接这次运行（<运行目录名>）：”填进输入框）。
 - 超过 3 分钟没写日志的 running/preparing 运行标为“可能已中断”。
 - 本会话有新运行启动时尝试打开 pane，底部状态栏同时显示“子 Agent 运行中”。定时器发起的打开属于“非主动请求”，界面不够宽时 App 会先挂起不显示，此时状态栏会提示 `/delegate-runs`；该命令是主动请求，打不开时会直接报出 App 给的原因。pane 由 App 决定落位，mod 不能插进 App 内置的会话信息列表。
@@ -64,6 +65,10 @@
   - 其余失败归 Agent 和 Claude 处理。
 - **回复**：一行 `rev · 变化 · 可开工 · 需关注 N 项`；`get` 返回带 ID 的紧凑文本。
 - **提醒**：本会话已有拼图、但 `run_cli.py run` 没带 `--task` 时，面板在这次 Bash 结果后附一条只有 Claude 能看到的提醒。
+- **「需求拼图」pane**：
+  - 打开：`/puzzle`；Claude 第一次 `plan` 时也会尝试打开，重载或恢复会话时重开（用户手动关掉的除外）。
+  - 展示分三层：默认是按组成分组的块、已验收数和需关注；悬停时说明行换成“谁在做 · 做到哪”，相关块标出“前置 / 后续”；点击后展开详情和处理入口。处理入口只往输入框里填文字。
+  - 对话里的 `blueprint` 调用、带 `--task` 的派发、这些派发的后台完成通知，各压成一行，悬停时点亮对应的块；ctrl+o 照常显示原样。
 
 安装方式见插件目录里的 `README.md`。CLI 使用的 MCP 和桌面端内置插件不是自动共享关系，面板与 GUI 验收互不依赖。
 

@@ -218,16 +218,17 @@ test("lists this session's runs as cards, opens itself, and shows a run's live l
   for (const surface of ['desktop', 'terminal'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
 
-    expect((await ui.find({ key: LIVE }))?.text).toMatch(/未命名任务/)
-    expect((await ui.find({ key: LIVE }))?.text).toMatch(/Cursor · grok-4\.7-medium · 只读 · 17:15 · 1 分 00 秒/)
+    // The title alone is the button: a desktop button draws its label as one plain line.
+    expect((await ui.find({ key: LIVE }))?.text).toBe('未命名任务')
+    expect((await ui.find({ key: `card-${LIVE}` }))?.text).toMatch(/Cursor · grok-4\.7-medium · 只读 · 17:15 · 1 分 00 秒/)
     expect(await ui.find({ type: 'Text', text: /读取 a\.txt/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /可能已中断/ })).toBeDefined()
     expect(await ui.find({ key: OTHER })).toBeUndefined()
     expect(await ui.find({ key: 'group-blog' })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: /delegate-cli-panel 0\.4\.0/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /delegate-cli-panel 0\.5\.0/ })).toBeDefined()
 
     await ui.press({ key: 'scope-all' })
-    expect((await ui.find({ key: OTHER }))?.text).toMatch(/Codex · gpt-6-astra \/ medium · 可写 · 16:56 · 5 分 00 秒 · 31\.9k tok/)
+    expect((await ui.find({ key: `card-${OTHER}` }))?.text).toMatch(/Codex · gpt-6-astra \/ medium · 可写 · 16:56 · 5 分 00 秒 · 31\.9k tok/)
     expect(await ui.find({ type: 'Text', text: /31\.9k tok/ })).toBeDefined()
     expect(await ui.find({ key: 'group-web' })).toBeDefined()
     await ui.press({ key: 'scope-mine' })

@@ -127,7 +127,7 @@ declare module 'claude-code' {
       blueprint: Shaped<Blueprint | null>
       puzzleView: PuzzleView
       puzzleSelected: string | null
-      /** The block whose card holds the keyboard; its preview stays shown. */
+      /** The block whose card holds the keyboard; its card shows who and where in place of the summary. */
       puzzleFocused: string | null
       /** The person closed the puzzle pane; it stays closed until the next plan or /puzzle. */
       puzzleDismissed: boolean

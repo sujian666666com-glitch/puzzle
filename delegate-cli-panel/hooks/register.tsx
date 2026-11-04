@@ -14,8 +14,12 @@ import {
   replyLine,
   writeLog,
 } from './blueprint'
+import { drawPuzzle, PUZZLE_COLUMNS, PUZZLE_PANE, PUZZLE_TITLE } from './puzzle'
+import type { PuzzleActions, PuzzleModel } from './puzzle'
+import { drawBlueprintRow, drawDispatchRow, drawTaskNotice, RUN_CALL, TASK_FLAG } from './rows'
+import type { RowModel } from './rows'
 
-const VERSION = '0.4.0'
+const VERSION = '0.5.0'
 const PANE = 'delegate-agents'
 const TITLE = '子 Agent'
 // One second, so an open live run can tick its status line. Other gaps skip ticks.
@@ -66,8 +70,9 @@ type Entry =
   | { kind: 'mark'; text: string; tone: Tone }
   | { kind: 'quiet'; text: string }
 
-// Change a tag when that value's fields change: it declines what an earlier
-// version stored, which outlives a reload.
+// Change a tag when that value's fields change: it declines what an earlier version stored,
+// which outlives a reload. The state scan reads only the atoms a module makes itself, so every
+// value the panes and the transcript rows draw from is made here and handed to them.
 const runs = atom({ plugin: 'delegate-cli-panel', key: 'runs' } as const, [], { shape: 'runs-4' })
 const detail = atom({ plugin: 'delegate-cli-panel', key: 'detail' } as const, null, { shape: 'detail-3' })
 const selected = atom({ plugin: 'delegate-cli-panel', key: 'selected' } as const, null)
@@ -78,9 +83,11 @@ const dismissed = atom({ plugin: 'delegate-cli-panel', key: 'dismissed' } as con
 const stopArm = atom({ plugin: 'delegate-cli-panel', key: 'stopArm' } as const, null, { shape: 'stop-1' })
 const blueprint = atom({ plugin: 'delegate-cli-panel', key: 'blueprint' } as const, null, { shape: 'blueprint-1' })
 const dispatches = atom({ plugin: 'delegate-cli-panel', key: 'dispatches' } as const, {}, { shape: 'dispatches-1' })
+const puzzleView = atom({ plugin: 'delegate-cli-panel', key: 'puzzleView' } as const, 'board')
+const puzzleSelected = atom({ plugin: 'delegate-cli-panel', key: 'puzzleSelected' } as const, null)
+const puzzleFocused = atom({ plugin: 'delegate-cli-panel', key: 'puzzleFocused' } as const, null)
+const puzzleDismissed = atom({ plugin: 'delegate-cli-panel', key: 'puzzleDismissed' } as const, false)
 
-const RUN_CALL = /run_cli\.py['"]?\s+run\b/
-const TASK_FLAG = /--task(?:=|\s+)(['"]?)([A-Za-z0-9][A-Za-z0-9._-]{0,63})\1(?=\s|$)/
 const UNTRACKED_RUN =
   '这次派发没有带 --task，需求拼图里不会出现这次运行。按 blueprint 里的任务 ID 补上，或用 blueprint task 增加对应任务后续接。'
 const BLUEPRINT_DESCRIPTION = [
@@ -700,6 +707,71 @@ async function loadBlueprint($: EngineInterface) {
   await update($, blueprint, () => replayed)
 }
 
+/** Opens the puzzle pane, and selects a block when one is named. */
+async function openPuzzle($: EngineInterface, piece?: string) {
+  await update($, puzzleDismissed, () => false)
+  if (piece) await update($, puzzleSelected, () => piece)
+
+  return $.ui.open({ id: PUZZLE_PANE, title: PUZZLE_TITLE, columns: PUZZLE_COLUMNS })
+}
+
+// 停止 asks twice: the first press arms it for five seconds, the second sends SIGTERM.
+async function pressStop($: EngineInterface, run: RunRow) {
+  const at = await $.clock.now()
+  const pending = await read($, stopArm)
+  if (!pending || pending.id !== run.id || at - pending.at > STOP_MS) {
+    await update($, stopArm, () => ({ id: run.id, at }))
+    return
+  }
+  await update($, stopArm, () => null)
+  await stopRun($, run)
+}
+
+function puzzleActions($: EngineInterface): PuzzleActions {
+  return {
+    show: async id => void (await update($, puzzleSelected, () => id)),
+    toggle: async id => void (await update($, puzzleSelected, current => (current === id ? null : id))),
+    close: async () => void (await update($, puzzleSelected, () => null)),
+    setView: async view => void (await update($, puzzleView, () => view)),
+    openRun: id => showRuns($, id),
+    openRuns: () => showRuns($),
+    stop: run => pressStop($, run),
+  }
+}
+
+async function rowModel($: EngineInterface): Promise<RowModel> {
+  return {
+    bp: await read($, blueprint),
+    rows: await read($, runs),
+    dispatches: await read($, dispatches),
+    now: await $.clock.now(),
+  }
+}
+
+// A new plan brings the puzzle pane forward. Opened from a tool call, it is a request the
+// person did not make, so a surface may hold it back; then they hear where it is.
+async function announcePuzzle($: EngineInterface) {
+  const placed = await openPuzzle($)
+  if (!placed.isPlaced) $.ui.toast('需求拼图已建立，输入 /puzzle 查看')
+}
+
+// After a reload or a resume the puzzle comes back, unless the person closed it.
+async function reopenPuzzle($: EngineInterface) {
+  if (!(await read($, blueprint)) || (await read($, puzzleDismissed))) return
+  if ((await $.ui.panes()).some(pane => pane.id === PUZZLE_PANE)) return
+  await openPuzzle($)
+}
+
+// From the puzzle: the 子 Agent pane, on one run's page or on its list.
+async function showRuns($: EngineInterface, id?: string) {
+  const run = id ? (await read($, runs)).find(one => one.id === id) : undefined
+  if (run) await openRun($, run)
+  else await update($, selected, () => null)
+  await update($, dismissed, () => false)
+  const placed = await $.ui.open({ id: PANE, title: TITLE })
+  isPaneHeld = !placed.isPlaced
+}
+
 function serialize<T>(work: () => Promise<T>): Promise<T> {
   const run = blueprintChain.then(work, work)
   blueprintChain = run.catch(() => undefined)
@@ -727,6 +799,8 @@ async function blueprintCall($: EngineInterface, input: Record<string, unknown>)
     logLines = lines
     await update($, blueprint, () => next)
     isWoken = true
+    // Written already: a pane that fails to open must not turn the answer into a refusal.
+    if (op.op === 'plan') await announcePuzzle($).catch(() => undefined)
 
     return { result: replyLine(derive(next, await read($, runs), now), change) }
   } catch (error) {
@@ -742,13 +816,88 @@ export const register: Register = on => {
       name: 'delegate-runs',
       description: '打开子 Agent 面板：delegate-cli 派发的 Codex/Pi/Cursor 运行、结果与实时过程',
     })
+    await $.command.register({
+      name: 'puzzle',
+      description: '打开需求拼图：本会话委派的需求由哪些块组成、谁在做、哪里要你处理',
+    })
     await $.tool.register({ name: 'blueprint', description: BLUEPRINT_DESCRIPTION, inputSchema: BLUEPRINT_SCHEMA })
     await update($, stopArm, () => null)
     await loadBlueprint($).catch(() => undefined)
     $.clock.every(TICK_MS, () => void refresh($).catch(() => undefined))
     void reopen($).catch(() => undefined)
+    void reopenPuzzle($).catch(() => undefined)
 
     return next(e)
+  })
+
+  on('command.run', { command: 'puzzle' }, async $ => {
+    const placed = await openPuzzle($)
+    if (!placed.isPlaced) return { text: `需求拼图没能显示：${placed.reason}` }
+
+    return {
+      text: (await read($, blueprint))
+        ? '需求拼图已打开。'
+        : '需求拼图已打开。本会话还没有拼图，用 delegate-cli 委派时 Claude 会先建立。',
+    }
+  })
+
+  on('ui.close', { id: 'delegate-puzzle' }, async ($, e, next) => {
+    if (e.origin.kind === 'person') await update($, puzzleDismissed, () => true)
+
+    return next(e)
+  })
+
+  // Keyboard focus on a card shows what a pointer would.
+  on('ui.focus', { component: 'Pane' }, async ($, e, next) => {
+    if (e.requestId === PUZZLE_PANE) {
+      const element = e.element ?? ''
+      await update($, puzzleFocused, () => (element.startsWith('open-') ? element.slice(5) : null))
+    }
+
+    return next(e)
+  })
+
+  on('ui.render', { component: 'Pane', requestId: 'delegate-puzzle' }, async ($, e) => {
+    const now = await $.clock.now()
+    const arm = await read($, stopArm)
+    const model: PuzzleModel = {
+      bp: await read($, blueprint),
+      rows: await read($, runs),
+      view: await read($, puzzleView),
+      open: await read($, puzzleSelected),
+      focus: await read($, puzzleFocused),
+      armed: arm && now - arm.at <= STOP_MS ? arm.id : null,
+      now,
+    }
+
+    return drawPuzzle($, e, model, puzzleActions($))
+  })
+
+  // ctrl+o shows the engine's own rows; the compact ones join their block's hover group.
+  on('ui.render', { component: 'ToolUse', props: { tool: 'mcp__delegate-cli-panel__blueprint' } }, async ($, e, next) =>
+    e.props.isExpanded ? next(e) : drawBlueprintRow($, e, await rowModel($), piece => openPuzzle($, piece)),
+  )
+
+  on('ui.render', { component: 'ToolUse', props: { tool: 'Bash' } }, async ($, e, next) => {
+    const command = (e.props.input as { command?: unknown } | null)?.command
+    if (e.props.isExpanded || typeof command !== 'string' || !RUN_CALL.test(command)) return next(e)
+
+    return drawDispatchRow($, e, await rowModel($), piece => openPuzzle($, piece)) ?? next(e)
+  })
+
+  // The blueprint row already says what the call changed.
+  on('ui.render', { component: 'ToolResult', props: { tool: 'mcp__delegate-cli-panel__blueprint' } }, async ($, e, next) => {
+    if (e.props.isExpanded) return next(e)
+    const { Box } = $.ui.resolve(e)
+
+    return <Box />
+  })
+
+  on('ui.render', { component: 'UserMessage', props: { origin: { kind: 'task-notification' } } }, async ($, e, next) => {
+    const started = e.props.task?.toolUseId
+    if (e.props.isExpanded || !started || !(started in (await read($, dispatches)))) return next(e)
+
+    return drawTaskNotice($, e, await rowModel($), piece => openPuzzle($, piece)) ?? next(e)
   })
 
   on('tool.call', { tool: 'mcp__delegate-cli-panel__blueprint' }, async ($, e) =>
@@ -802,6 +951,9 @@ export const register: Register = on => {
     const run = all.find(one => one.id === open)
 
     if (run) {
+      const bp = await read($, blueprint)
+      const ownerTask = run.task && bp ? bp.tasks.find(one => one.id === run.task) : undefined
+      const belongs = (bp?.pieces ?? []).filter(piece => ownerTask?.pieces.includes(piece.id))
       const log = await read($, detail)
       const page = await read($, tab)
       const arm = await read($, stopArm)
@@ -868,22 +1020,25 @@ export const register: Register = on => {
           <Text size="caption" dimColor wrap="truncate-end">
             {subtitle(run, now)}
           </Text>
+          {belongs.length ? (
+            <Box flexDirection="row" gap="xs">
+              <Text size="caption" dimColor>
+                所属
+              </Text>
+              {belongs.map(piece => (
+                <Button key={`piece-${piece.id}`} plain dimColor onPress={() => void openPuzzle($, piece.id)}>
+                  {piece.title}
+                </Button>
+              ))}
+            </Box>
+          ) : null}
           <Box flexDirection="row" gap={1} marginTop={1}>
             {isLive ? (
               <Button
                 key="stop"
                 label={armed ? '确认停止' : '停止'}
                 variant={armed ? 'primary' : 'secondary'}
-                onPress={async () => {
-                  const at = await $.clock.now()
-                  const pending = await read($, stopArm)
-                  if (!pending || pending.id !== run.id || at - pending.at > STOP_MS) {
-                    await update($, stopArm, () => ({ id: run.id, at }))
-                    return
-                  }
-                  await update($, stopArm, () => null)
-                  await stopRun($, run)
-                }}
+                onPress={() => pressStop($, run)}
               />
             ) : null}
             <Button
@@ -1069,47 +1224,44 @@ export const register: Register = on => {
               const failed = one.error && !ACTIVE.has(one.status) ? one.error : ''
 
               return (
-                <Box key={`card-${one.id}`} flexDirection="column" marginTop={1} paddingX={1} borderStyle="round" borderDimColor>
-                  <Button
-                    key={one.id}
-                    plain
-                    onPress={() => openRun($, one)}
-                  >
-                    <Text weight="semibold" wrap="truncate-end">
-                      {one.title}{' '}
-                    </Text>
-                    <Text color={look.tone} weight="medium">
+                <Box
+                  key={`card-${one.id}`}
+                  flexDirection="column"
+                  marginTop={1}
+                  paddingX={1}
+                  borderStyle="round"
+                  borderDimColor
+                  hover={{ borderColor: 'suggestion', borderDimColor: false }}
+                >
+                  {/* A desktop Button draws its label as one plain line, so only the title goes in it. */}
+                  <Box flexDirection="row" justifyContent="space-between" gap={1}>
+                    <Button key={one.id} plain onPress={() => openRun($, one)}>
+                      {one.title}
+                    </Button>
+                    <Text size="caption" color={look.tone} weight="medium">
                       {look.glyph} {look.label}
                     </Text>
-                    {'\n'}
+                  </Box>
+                  <Box flexDirection="column" paddingLeft="xs">
                     <Text size="caption" dimColor wrap="truncate-end">
                       {subtitle(one, now)}
                     </Text>
-                    {one.lastLine ? '\n' : ''}
                     {one.lastLine ? (
                       <Text size="footnote" wrap="truncate-end">
                         {one.lastLine}
                       </Text>
-                    ) : (
-                      ''
-                    )}
-                    {beat ? '\n' : ''}
+                    ) : null}
                     {beat ? (
                       <Text size="footnote" color="claude">
                         {beat}
                       </Text>
-                    ) : (
-                      ''
-                    )}
-                    {failed ? '\n' : ''}
+                    ) : null}
                     {failed ? (
                       <Text size="footnote" color="error" wrap="truncate-end">
                         {failed}
                       </Text>
-                    ) : (
-                      ''
-                    )}
-                  </Button>
+                    ) : null}
+                  </Box>
                 </Box>
               )
             })}
