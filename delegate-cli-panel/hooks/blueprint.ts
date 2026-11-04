@@ -1,6 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { Blocker, Blueprint, Criterion, Group, Owner, Piece, Question, RunRow, Task } from '../types'
+import { isWindows } from './host'
 
 // The requirement blueprint. Claude writes intent and verdicts through the blueprint tool;
 // the runner writes run facts; every status below is derived from those two, never stored.
@@ -619,6 +620,14 @@ export function blueprintPaths(home: string, session: string) {
 async function replaceFile($: EngineInterface, path: string, text: string) {
   const temp = `${path}.tmp`
   await $.fs.write(temp, text)
+  if (await isWindows($)) {
+    // No mv here; cmd's move reads "/" as a switch, so it gets backslashes. A reader holding
+    // the file makes the move fail: then write in place, which only that reader can catch half.
+    const win = (one: string) => one.replace(/\//g, '\\')
+    const moved = await $.process.run(['cmd', '/d', '/c', 'move', '/y', win(temp), win(path)]).catch(() => null)
+    if (moved?.exitCode !== 0) await $.fs.write(path, text)
+    return
+  }
   const moved = await $.process.run(['mv', '-f', temp, path])
   if (moved.exitCode !== 0) throw new Error(`没能写入 ${path}`)
 }

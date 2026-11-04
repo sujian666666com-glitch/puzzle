@@ -14,12 +14,13 @@ import {
   replyLine,
   writeLog,
 } from './blueprint'
+import { homeDir, isWindows } from './host'
 import { drawPuzzle, PUZZLE_COLUMNS, PUZZLE_PANE, PUZZLE_TITLE } from './puzzle'
 import type { PuzzleActions, PuzzleModel } from './puzzle'
 import { drawBlueprintRow, drawDispatchRow, drawTaskNotice, RUN_CALL, TASK_FLAG } from './rows'
 import type { RowModel } from './rows'
 
-const VERSION = '0.5.0'
+const VERSION = '0.5.1'
 const PANE = 'delegate-agents'
 const TITLE = '子 Agent'
 // One second, so an open live run can tick its status line. Other gaps skip ticks.
@@ -195,7 +196,7 @@ function tidy(value: string, cwd: string) {
   if (shell?.[1]) shown = shell[1]
   if (!cwd) return shown
 
-  return shown === cwd ? '.' : shown.split(`${cwd}/`).join('')
+  return shown === cwd ? '.' : shown.split(`${cwd}/`).join('').split(`${cwd}\\`).join('')
 }
 
 // A long path outside the project keeps its end, where the file name is: …/core/session-manager.js.
@@ -203,8 +204,9 @@ function compact(value: string) {
   const [head = '', ...more] = value.split(' · ')
   const tail = more.join(' · ')
   const path = (one: string) => {
-    const home = one.replace(/^\/Users\/[^/]+(?=\/|$)/, '~')
-    return /^[~/]\S*$/.test(home) && home.length > 44 ? `…/${home.split('/').slice(-2).join('/')}` : home
+    const home = one.replace(/^\/Users\/[^/]+(?=\/|$)/, '~').replace(/^[A-Za-z]:\\Users\\[^\\]+(?=\\|$)/i, '~')
+    const isPath = /^[~/]\S*$/.test(home) || /^[A-Za-z]:\\\S*$/.test(home)
+    return isPath && home.length > 44 ? `…/${home.split(/[\\/]/).slice(-2).join('/')}` : home
   }
 
   return tail ? `${head} · ${path(tail)}` : path(head)
@@ -443,7 +445,9 @@ async function loadRow($: EngineInterface, root: string, name: string, sessionId
     finishedAt: finishedAt === null ? null : finishedAt * 1000,
     cwd: text(meta.cwd),
     runDir: dir,
-    watch: text(meta.watch_command) || `tail -n +1 -f "${dir}/progress.log"`,
+    watch: text(meta.watch_command) || (await isWindows($)
+      ? `Get-Content -Wait -Encoding UTF8 "${dir.replace(/\//g, '\\')}\\progress.log"`
+      : `tail -n +1 -f "${dir}/progress.log"`),
     isMine: meta.claude_session_id === sessionId,
     isStale: false,
     lastLine: '',
@@ -520,7 +524,7 @@ async function refresh($: EngineInterface, isForced = false) {
     if (!isForced && !isWoken && now - lastScan < gap) return
     isWoken = false
     lastScan = now
-    const home = await $.env.get('HOME')
+    const home = await homeDir($)
     if (!home) return
     const sessionId = await $.session.id()
     const root = `${home}/.claude/cli-runs`
@@ -664,6 +668,17 @@ async function stopRun($: EngineInterface, run: RunRow) {
     $.ui.toast('没有 runner 进程号，未停止')
     return
   }
+  if (await isWindows($)) {
+    // No signal reaches the runner here; it polls this file and ends the agent's process tree.
+    try {
+      await $.fs.write(`${run.runDir}/stop.request`, '')
+    } catch {
+      $.ui.toast('停止请求没有写入')
+      return
+    }
+    $.ui.toast('已请求停止')
+    return
+  }
   const pid = String(run.runnerPid)
   let command = ''
   try {
@@ -694,7 +709,7 @@ async function openRun($: EngineInterface, run: RunRow) {
 }
 
 async function sessionHome($: EngineInterface) {
-  return { home: (await $.env.get('HOME')) ?? '', session: await $.session.id() }
+  return { home: await homeDir($), session: await $.session.id() }
 }
 
 // The log is the truth and the atom what the panes draw from; a reload or a resume replays the log.

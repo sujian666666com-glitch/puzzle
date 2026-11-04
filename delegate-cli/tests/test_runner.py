@@ -159,7 +159,7 @@ class RunnerTests(unittest.TestCase):
     def test_task_recorded_and_kept_on_resume(self):
         _, first = self.run_offline(extra=['--quiet', '--task', ' T2 '])
         self.assertEqual(first['task'], 'T2')
-        saved = json.loads((Path(first['run_dir']) / 'run.json').read_text())
+        saved = json.loads((Path(first['run_dir']) / 'run.json').read_text(encoding='utf-8'))
         self.assertEqual(saved['task'], 'T2')
         _, resumed = self.run_offline(extra=['--quiet', '--resume-from', str(Path(first['run_dir']) / 'run.json')])
         self.assertEqual(resumed['task'], 'T2')
@@ -167,9 +167,17 @@ class RunnerTests(unittest.TestCase):
         _, moved = self.run_offline(extra=['--quiet', '--task', 'T3', '--resume-from', str(Path(resumed['run_dir']) / 'run.json')])
         self.assertEqual(moved['task'], 'T3')
 
+    def test_watch_command_runs_in_the_platform_shell(self):
+        _, meta = self.run_offline(extra=['--quiet'])
+        line = meta['watch_command'] + ' --once'
+        shell = ['powershell', '-NoProfile', '-Command', line] if WINDOWS else ['sh', '-c', line]
+        result = subprocess.run(shell, env=self.env, capture_output=True, text=True,
+                                encoding='utf-8', errors='replace', timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_bad_task_is_blocked_before_a_run_directory(self):
         result = subprocess.run(self.command(extra=['--task', 'T2; rm -rf /']), env=self.env,
-                                capture_output=True, text=True, timeout=15)
+                                capture_output=True, text=True, encoding='utf-8', timeout=15)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         blocked = json.loads(result.stdout.splitlines()[-1])
         self.assertEqual(blocked['status'], 'blocked')

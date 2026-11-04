@@ -489,6 +489,15 @@ def task_identity(handoff, title):
     return title, goal
 
 
+def shell_command(argv):
+    """A command line to paste: POSIX quoting, or on Windows one PowerShell runs."""
+    if not WINDOWS:
+        return shlex.join(argv)
+    line = subprocess.list2cmdline(argv)
+    # PowerShell reads a leading quoted path as a string; & runs it.
+    return f'& {line}' if line.startswith('"') else line
+
+
 def run_job(args):
     cwd = Path(args.cwd).expanduser().resolve(strict=True)
     if not cwd.is_dir():
@@ -546,8 +555,8 @@ def run_job(args):
             'session_file': previous.get('session_file') if previous else None,
             'result_file': str(run_dir / 'result.md'), 'timeout_seconds': args.timeout,
             'started_at': time.time(), 'progress_file': str(run_dir / 'progress.log'), 'usage': None,
-            'watch_command': shlex.join([sys.executable, str(Path(__file__).resolve()), 'watch',
-                                         '--run-file', str(run_dir / 'run.json')])}
+            'watch_command': shell_command([sys.executable, str(Path(__file__).resolve()), 'watch',
+                                            '--run-file', str(run_dir / 'run.json')])}
     if args.agent == 'pi' and args.access == 'read':
         meta['restriction'] = 'Tool selection only; extensions and host permissions are not sandboxed'
     elif args.agent == 'cursor':

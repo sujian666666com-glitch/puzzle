@@ -3,6 +3,8 @@ import { expect, mock, test } from 'claude-code/testing'
 
 const HOME = '/home/t'
 const ROOT = `${HOME}/.claude/cli-runs`
+// The engine hands fs hooks a host path: on Windows "/home/t" arrives as "D:\home\t".
+const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
 const NOW = new Date(2026, 10, 3, 10, 0, 0).getTime()
 const TOOL = 'mcp__delegate-cli-panel__blueprint'
 const PLUGIN = 'delegate-cli-panel'
@@ -93,18 +95,18 @@ function world(on: On, w: World) {
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__delegate-cli-panel__${e.name}` } }))
   on('fs.list', (_, e) => {
-    if (e.path !== ROOT) return { value: [] }
+    if (posix(e.path) !== ROOT) return { value: [] }
 
     return { value: Object.keys(w.runs).map(name => ({ name, kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false })) }
   })
   on('fs.read', (_, e) => {
-    const parts = e.path.split('/')
+    const parts = posix(e.path).split('/')
     if (parts.at(-1) === 'run.json') return { value: JSON.stringify(w.runs[parts.at(-2) ?? ''] ?? {}) }
 
-    return { value: w.files[e.path] ?? '' }
+    return { value: w.files[posix(e.path)] ?? '' }
   })
   on('fs.write', (_, e) => {
-    w.files[e.path] = e.text
+    w.files[posix(e.path)] = e.text
 
     return { value: undefined }
   })

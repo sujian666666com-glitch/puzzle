@@ -3,6 +3,8 @@ import { expect, mock, test } from 'claude-code/testing'
 
 const HOME = '/home/t'
 const ROOT = `${HOME}/.claude/cli-runs`
+// The engine hands fs hooks a host path: on Windows "/home/t" arrives as "D:\home\t".
+const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
 const NOW = new Date(2026, 10, 2, 17, 16, 0).getTime()
 const LIVE = '20261102-171500-cursor-live0001'
 const STALE = '20261102-150000-pi-stale001'
@@ -106,6 +108,8 @@ type Extra = {
   fills?: { text: string; mode: string }[]
   toasts?: string[]
   ps?: { stdout: string }
+  env?: Record<string, string>
+  writes?: string[]
 }
 
 // Nothing sits beneath the plugin: these hooks stand for the engine and the disk.
@@ -121,7 +125,12 @@ function world(
   const fills = extra.fills ?? []
   const toasts = extra.toasts ?? []
   const ps = extra.ps ?? { stdout: '' }
-  mock.env(on, { HOME })
+  mock.env(on, extra.env ?? { HOME })
+  on('fs.write', (_, e) => {
+    extra.writes?.push(posix(e.path))
+
+    return { value: undefined }
+  })
   on('ui.panes', () => ({ value: [] }))
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.surfaces', () => ({ value: ['desktop'] as const }))
@@ -161,14 +170,14 @@ function world(
     }
   })
   on('fs.list', (_, e) => {
-    if (e.path === ROOT) {
+    if (posix(e.path) === ROOT) {
       return {
         value: [...names, '.locks'].map(name => ({
           name, kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false,
         })),
       }
     }
-    const name = e.path.split('/').pop() ?? ''
+    const name = posix(e.path).split('/').pop() ?? ''
     const log = extra.logs?.[name] ?? LOG[name]
 
     return {
@@ -178,11 +187,11 @@ function world(
     }
   })
   on('fs.read', (_, e) => {
-    const parts = e.path.split('/')
+    const parts = posix(e.path).split('/')
     const file = parts.at(-1) ?? ''
     const name = parts.at(-2) ?? ''
     if (file === 'run.json') return { value: JSON.stringify(extra.meta?.[name] ?? META[name] ?? {}) }
-    if (extra.files && e.path in extra.files) return { value: extra.files[e.path] ?? '' }
+    if (extra.files && posix(e.path) in extra.files) return { value: extra.files[posix(e.path)] ?? '' }
     if (file === 'result.md') return { value: (extra.results ?? RESULT)[name] ?? RESULT[name] ?? '' }
     if (file === 'progress.log') return { value: (extra.logs?.[name] ?? LOG[name])?.text ?? '' }
     if (file === 'task.md' || file === 'handoff.md') return { value: extra.files?.[`${name}/${file}`] ?? '' }
@@ -225,7 +234,7 @@ test("lists this session's runs as cards, opens itself, and shows a run's live l
     expect(await ui.find({ type: 'Text', text: /可能已中断/ })).toBeDefined()
     expect(await ui.find({ key: OTHER })).toBeUndefined()
     expect(await ui.find({ key: 'group-blog' })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: /delegate-cli-panel 0\.5\.0/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /delegate-cli-panel 0\.5\.1/ })).toBeDefined()
 
     await ui.press({ key: 'scope-all' })
     expect((await ui.find({ key: `card-${OTHER}` }))?.text).toMatch(/Codex · gpt-6-astra \/ medium · 可写 · 16:56 · 5 分 00 秒 · 31\.9k tok/)
@@ -558,5 +567,33 @@ test('stop asks twice, checks the process, and reverts; follow fills the prompt'
   expect(await ui.find({ key: 'stop' })).toBeUndefined()
   await ui.press({ key: 'follow' })
   expect(fills.at(-1)).toEqual({ text: `用 delegate-cli 续接这次运行（${ASK}）：`, mode: 'replace' })
+  await ui.unmount()
+})
+
+test('on Windows, stop finds the runs under USERPROFILE and asks the runner through stop.request', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const commands: string[][] = []
+  const toasts: string[] = []
+  const writes: string[] = []
+  // No HOME, as a desktop app on Windows sees it; the drive letter drops out in posix().
+  world(on, [], [], true, [STOP_RUN], {
+    commands,
+    toasts,
+    writes,
+    env: { USERPROFILE: 'C:\\home\\t', OS: 'Windows_NT' },
+    meta: { [STOP_RUN]: runMeta({ status: 'running', finished_at: undefined, runner_pid: 4242, started_at: NOW / 1000 - 30 }) },
+    logs: { [STOP_RUN]: { text: '17:13:00 ● cursor\n', mtimeMs: NOW - 1000 } },
+  })
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+
+  await ui.press({ key: STOP_RUN })
+  await ui.press({ key: 'stop' })
+  await ui.press({ key: 'stop' })
+  expect(commands).toEqual([])
+  expect(writes).toEqual([`${ROOT}/${STOP_RUN}/stop.request`])
+  expect(toasts.at(-1)).toBe('已请求停止')
   await ui.unmount()
 })

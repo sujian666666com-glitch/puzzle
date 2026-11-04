@@ -3,6 +3,8 @@ import { expect, mock, test } from 'claude-code/testing'
 
 const HOME = '/home/t'
 const ROOT = `${HOME}/.claude/cli-runs`
+// The engine hands fs hooks a host path: on Windows "/home/t" arrives as "D:\home\t".
+const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
 const LOG = `${ROOT}/blueprints/sess-1.jsonl`
 const SNAPSHOT = `${ROOT}/blueprints/sess-1.json`
 const NOW = new Date(2026, 10, 3, 10, 0, 0).getTime()
@@ -26,11 +28,18 @@ const PLAN = {
   ],
 }
 
-type Disk = { files: Record<string, string>; writes: string[]; runs: Record<string, object> }
+type Disk = {
+  files: Record<string, string>
+  writes: string[]
+  runs: Record<string, object>
+  argv?: string[][]
+  /** cmd's move fails, as it does while a reader holds the target. */
+  isMoveLocked?: boolean
+}
 
 // Nothing sits beneath the plugin: these hooks stand for the engine and the disk.
-function world(on: On, disk: Disk) {
-  mock.env(on, { HOME })
+function world(on: On, disk: Disk, env: Record<string, string> = { HOME }) {
+  mock.env(on, env)
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.surfaces', () => ({ value: ['desktop'] as const }))
   on('ui.panes', () => ({ value: [] }))
@@ -39,29 +48,34 @@ function world(on: On, disk: Disk) {
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__delegate-cli-panel__${e.name}` } }))
   on('fs.list', (_, e) => {
-    if (e.path !== ROOT) return { value: [] }
+    if (posix(e.path) !== ROOT) return { value: [] }
 
     return {
       value: Object.keys(disk.runs).map(name => ({ name, kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false })),
     }
   })
   on('fs.read', (_, e) => {
-    const parts = e.path.split('/')
+    const parts = posix(e.path).split('/')
     if (parts.at(-1) === 'run.json') return { value: JSON.stringify(disk.runs[parts.at(-2) ?? ''] ?? {}) }
 
-    return { value: disk.files[e.path] ?? '' }
+    return { value: disk.files[posix(e.path)] ?? '' }
   })
   on('fs.write', (_, e) => {
-    disk.files[e.path] = e.text
-    disk.writes.push(e.path)
+    disk.files[posix(e.path)] = e.text
+    disk.writes.push(posix(e.path))
 
     return { value: undefined }
   })
   on('process.run', (_, e) => {
-    const [command, , from, to] = e.argv
-    if (command === 'mv' && from && to && from in disk.files) {
-      disk.files[to] = disk.files[from] ?? ''
-      delete disk.files[from]
+    disk.argv?.push([...e.argv])
+    const isMove = e.argv[0] === 'cmd' && e.argv[3] === 'move'
+    const [command, , from, to] = isMove ? ['mv', '', e.argv[5] ?? '', e.argv[6] ?? ''] : e.argv
+    if (isMove && disk.isMoveLocked) {
+      return { value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+    if (command === 'mv' && from && to && posix(from) in disk.files) {
+      disk.files[posix(to)] = disk.files[posix(from)] ?? ''
+      delete disk.files[posix(from)]
     }
 
     return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -87,6 +101,29 @@ test('plan logs the blueprint and answers in one line', async ($, on) => {
   expect(disk.files[LOG]).toContain('"op":"plan"')
   expect(JSON.parse(disk.files[SNAPSHOT] ?? '{}').pieces).toHaveLength(3)
   expect(disk.writes.every(path => path.endsWith('.tmp'))).toBe(true)
+})
+
+test('on Windows the log lands under USERPROFILE through cmd move, or in place when the move is refused', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const disk: Disk = { ...fresh(), argv: [] }
+  world(on, disk, { USERPROFILE: 'C:\\home\\t', OS: 'Windows_NT' })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+
+  expect((await call($, PLAN)).result).toMatch(/^rev 1 /)
+  expect(disk.argv?.[0]).toEqual([
+    'cmd', '/d', '/c', 'move', '/y',
+    'C:\\home\\t\\.claude\\cli-runs\\blueprints\\sess-1.jsonl.tmp',
+    'C:\\home\\t\\.claude\\cli-runs\\blueprints\\sess-1.jsonl',
+  ])
+  expect(disk.argv?.some(argv => argv[0] === 'mv')).toBe(false)
+  expect(disk.files[LOG]).toContain('"op":"plan"')
+
+  disk.isMoveLocked = true
+  const answer = await call($, { op: 'check', piece: 'R1', results: [{ criterion: 'R1.1', pass: true, evidence: 'pytest' }] })
+  expect(answer.deny).toBeUndefined()
+  expect(disk.writes.at(-1)).toBe(SNAPSHOT)
+  expect(disk.files[LOG]?.trim().split('\n')).toHaveLength(2)
 })
 
 test('what does not apply is refused and nothing is written', async ($, on) => {

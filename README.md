@@ -58,8 +58,18 @@ cd delegate-cli; python -m unittest discover -s tests
 | 输出编码与换行 | 系统默认 | stdout/stderr 强制 UTF-8 且不转换换行；`task.md` 按字节写入，CRLF 交接不会变成 CR CR LF |
 | 写 `run.json` | 原子替换 | 面板或 `watch` 正在读时替换会被拒绝，短暂重试（最多约 1 秒） |
 | Codex 沙箱 | 默认 | 追加 `-c windows.sandbox="unelevated"`，避开提权沙箱与桌面 node_repl 的冲突（os error 32） |
+| `watch_command` | POSIX 引号 | 双引号命令行，路径带空格时前加 `&`，可直接粘到 PowerShell |
 
-已知限制：面板的「停止」按钮仍用 `ps` + `kill -TERM`，在 Windows 上无效；需要停止时手动在对应运行目录下创建 `stop.request`。
+面板（`delegate-cli-panel`）按 `OS=Windows_NT` 判断平台：
+
+| 项 | macOS / Linux | Windows |
+|---|---|---|
+| 用户目录 | `HOME` | `HOME`，没有时用 `USERPROFILE` |
+| 拼图日志原子替换 | `mv -f` | `cmd /c move /y`；目标正被读取导致移动失败时直接覆盖写入 |
+| 「停止」按钮 | `ps` 核对是 `run_cli.py` 后 `kill -TERM` | 在运行目录写 `stop.request`，由 runner 结束进程树 |
+| 跟随命令兜底（`run.json` 缺 `watch_command` 时） | `tail -f` | `Get-Content -Wait` |
+
+面板测试里的模拟文件系统按 POSIX 路径记账：Windows 上引擎会把 `/home/t` 规范成 `D:\home\t` 再交给 fs 钩子，测试用 `posix()` 换回来。
 
 ## 打包 Skill
 
