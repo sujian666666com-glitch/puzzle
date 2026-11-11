@@ -52,7 +52,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" doctor --cwd "/绝对/项目路
 - **派发带 `--task <任务 ID>`**：同一任务续接、重试仍用原任务（续接不传 `--task` 会沿用上次的）；新增工作先用 `task` 加任务，再派发。
 - **验收后 `check`**：逐条记过或不过，附上证据（测试命令、截图路径、运行目录）。CLI 正常结束只算“待验收”。
 - **只有轮到用户动手的事才标 `owner: user`**：
-  - 这类事包括缺权限或账号、需要用户明确规则、要用户在方案间做决定、需要用户授权（目录信任、提交）；用 `ask` 记问题、`block` 记阻碍，解决后 `answer` / `unblock`。
+  - 这类事包括缺权限或账号、需要用户明确规则、要用户在方案间做决定、需要用户授权（任务范围外的目录信任、提交）；用 `ask` 记问题、`block` 记阻碍，解决后 `answer` / `unblock`。
   - Agent 或你自己能处理的（失败的测试、锁冲突、写错的模型名、临时网络问题）标 `owner: agent`，或干脆不记。
   - 反复处理不掉、需要用户拿主意时，再明确转成 `owner: user` 的问题。
 - **需求修订**：用 `piece` 改说明或验收条件；已验收的块会转为“需复验”。
@@ -90,7 +90,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" run \
 - **任务名**：每次派发都传 `--title`，10～20 字说清做什么（如“审查 runner 改动”“补面板停止按钮”）。它就是面板卡片标题和后台任务名，不传时取交接里「目标：」那一行。
 - **拼图任务**：有拼图时每次派发都传 `--task`（见第 2 节），面板据此把这次运行挂到对应的块上。续接不传时沿用上次的任务；ID 不合法会在启动前 `blocked`，这行 JSON 里也带着 `task`。
 - **模型**：用户说的简称原样传，脚本按 skill 根目录的 `models.json` 解析，并在启动前用 CLI 自带的模型列表校验（`astra`→`gpt-6-astra`，`flash`→`deepseek/deepseek-flash`，`grok4.7`+`中`→`grok-4.7-medium`）。写错会立即 `blocked` 并给出候选，不会白跑。不传时用 `models.json` 的 `defaults`（目前只给 Cursor 配了 `grok-4.7-medium`），再没有就用 CLI 自己配置的默认模型；用户的"老样子"写进 `models.json`，三家都生效。Cursor 的思考档按同一模型族换档（没有的档位会报错并列出可用档），带方括号参数的 ID 原样放行。
-- **Cursor**：read 用 `--mode ask`，write 用 `--force`（执行命令，且隐含信任目录）。只读任务遇到未信任目录会 `blocked`；只有用户授权信任该目录时才加 `--cursor-trust approved`。
+- **Cursor**：read 用 `--mode ask`，write 用 `--force`（执行命令，且隐含信任目录）。Cursor 按具体目录记信任，新 worktree、临时副本都算新目录，只读任务进去会 `blocked`。目录在任务范围内（用户这次让你处理的项目，以及你从它建的 worktree、临时副本）时直接加 `--cursor-trust approved`，不用问用户；漏加而受阻时，加上后重跑同一任务，不要因此改派别的 Agent。范围外的目录（例如外部来源的代码）先问用户。
 - **Pi**：read 只选读取工具并在支持时关闭内置 MCP，保留扩展；尚未信任的项目资源用 `--pi-trust existing|skip|approved`（默认沿用已有信任；`skip` 对应 `--no-approve`，`approved` 对应一次性 `--approve`）。
 - **非 Git 目录**：Codex 默认拒绝；确属预期时加 `--skip-git-check`（只对 Codex 有效，用在其他 Agent 上会直接报错）。
 - 每次运行生成独立目录（默认 `~/.claude/cli-runs/`，`--run-root` 可改），保留 `task.md`、`handoff.md`、`run.json`、`result.md`、`stderr.log`、`progress.log` 和 CLI 帮助（解析过模型时另存 `models.txt`）；Codex/Cursor 另存 `events.jsonl`，Pi 保留会话文件。不要把日志提交进业务仓库。

@@ -30,8 +30,9 @@ SESSION_ID = re.compile(r'[A-Za-z0-9_-]+')
 TASK_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}')
 # Known refusals that are environment preconditions, not code failures.
 BLOCKERS = (
-    ('Workspace Trust Required', 'Cursor workspace is not trusted; add --cursor-trust approved '
-     'only when the user has authorized trusting this directory'),
+    ('Workspace Trust Required', 'Cursor workspace is not trusted; rerun with --cursor-trust approved '
+     'if this directory is in the task scope (a project the user gave you, or a worktree or copy '
+     'you made from one); otherwise ask the user first'),
     ('Not inside a trusted directory', 'Codex refuses a non-Git/untrusted directory; add '
      '--skip-git-check when running outside a Git repository is intended'),
     ('model is not supported', 'The CLI account rejected the model; list valid IDs with doctor --models'),
@@ -664,7 +665,9 @@ def main():
     run.add_argument('--model', help='Exact ID or an alias from models.json (astra, grok4.7, flash)')
     run.add_argument('--thinking', help='low/medium/high/xhigh/max or 低/中/高/超高/最高')
     run.add_argument('--pi-trust', choices=['existing', 'skip', 'approved'], default='existing')
-    run.add_argument('--cursor-trust', choices=['existing', 'approved'], default='existing')
+    run.add_argument('--cursor-trust', choices=['existing', 'approved'], default='existing',
+                     help='approved passes Cursor --trust (Cursor then remembers the directory); '
+                          'use it for directories in the task scope')
     run.add_argument('--skip-git-check', action='store_true',
                      help='Codex only: allow a working directory outside a Git repository')
     run.add_argument('--resume-from', help='Exact run.json from a finished job')

@@ -19,9 +19,11 @@ cursor-agent --print --output-format stream-json --model grok-4.7-medium \
 
 ## 工作区信任
 
-无头模式下目录未被信任时立即退出（stderr `Workspace Trust Required`），脚本把它标成 `blocked` 并提示。`--trust`、`--yolo`、`-f` 都会跳过该确认：
+无头模式下目录未被信任时立即退出（stderr `Workspace Trust Required`）。这一步在调用模型之前，不耗额度；脚本把它标成 `blocked` 并提示。`--trust`、`--yolo`、`-f` 都会跳过该确认。
 
-- 只读任务默认不信任；只有用户授权信任该目录时加 `--cursor-trust approved`。
+信任按具体路径记在 `~/.cursor/projects/<路径>/.workspace-trusted`：父目录信任了，子目录不算；主控新建的 worktree、临时副本也都是新目录，只读任务第一次进去必然受阻。`--trust` 通过后会写下这个标记，以后同一目录不加也能跑（2026-11-11 实测）。
+
+- 只读任务：目录在任务范围内（用户这次让你处理的项目，以及你从它建的 worktree、临时副本）时直接加 `--cursor-trust approved`，不用问用户；范围外的目录，尤其是外部来源的代码，先问用户。
 - 可写任务的 `--force` 本身就隐含信任，派发写任务等于让 Cursor 在该目录执行代码，选目录时要和授权范围一致。
 
 MCP 服务器在无头模式下需要 `--approve-mcps` 才会自动启用；脚本默认不加，需要时核对本机帮助后手动评估。

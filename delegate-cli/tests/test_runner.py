@@ -65,6 +65,9 @@ if os.environ.get('TEST_CANCEL'):
     (root / (name + '.ready')).write_text(str(os.getpid()))
     while True:
         time.sleep(0.05)
+elif os.environ.get('TEST_STDERR'):
+    sys.stderr.write(os.environ['TEST_STDERR'])
+    sys.exit(1)
 else:
     for line in Path(os.environ['TEST_FIXTURE']).read_text().splitlines():
         print(line, flush=True)
@@ -170,6 +173,33 @@ class RunnerTests(unittest.TestCase):
         self.assertIn('--task', blocked['error'])
         self.assertEqual(blocked['task'], 'T2; rm -rf /')
         self.assertFalse((self.root / 'jobs').exists())
+
+    def test_cursor_trust_refusal_names_the_rerun_flag(self):
+        # Cursor's own refusal in a directory it has not trusted yet (cursor-agent 2026.10.22).
+        refusal = ('\n⚠ Workspace Trust Required\n\n'
+                   '  Cursor Agent can execute code and access files in this directory.\n'
+                   '  Do you trust the contents of this directory?\n\n'
+                   '    /private/tmp/dcli-trust.Q7nU\n\n'
+                   '  To proceed, you can either:\n'
+                   "    • Run 'agent' interactively to decide\n"
+                   '    • Pass --trust, --yolo, or -f if you trust this directory\n')
+        result = subprocess.run(self.command(extra=['--quiet']), env=dict(self.env, TEST_STDERR=refusal),
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        meta = json.loads(result.stdout.splitlines()[-1])
+        self.assertEqual(meta['status'], 'blocked')
+        self.assertIn('--cursor-trust approved', meta['error'])
+        self.assertIn('task scope', meta['error'])
+        self.assertEqual(meta['error_detail'], '⚠ Workspace Trust Required')
+        self.assertNotIn('--trust', meta['argv'])
+
+    def test_cursor_trust_approved_passes_trust(self):
+        for flags, trusted in [([], False), (['--cursor-trust', 'approved'], True)]:
+            with self.subTest(flags=flags):
+                _, meta = self.run_offline(extra=flags + ['--dry-run', '--quiet'])
+                self.assertEqual(meta['status'], 'planned')
+                self.assertEqual(meta['cursor_trust'], 'approved' if trusted else 'existing')
+                self.assertEqual('--trust' in meta['argv'], trusted)
 
     def test_cursor_activity_and_partial_replay(self):
         progress, meta = self.progress('cursor')
