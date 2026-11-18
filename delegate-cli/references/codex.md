@@ -2,7 +2,7 @@
 
 核对日期：2026-11-02（本机 `codex-cli 0.166.0`，exec/resume 帮助与 10-14 版逐字一致）。以用户机器的 `codex --version`、`codex exec --help`、`codex exec resume --help` 为执行依据。以下是官方文档当前接口，不代表旧版均支持。
 
-封装脚本传 `--model` 前用 `codex debug models` 的目录校验 slug 和该模型支持的思考档位（`supported_reasoning_levels`），`astra` 这类简称按 `models.json` 解析成 `gpt-6-astra`。非 Git 且未信任的目录会被拒绝（`Not inside a trusted directory`）；确属预期时给脚本加 `--skip-git-check`，对应 `codex exec --skip-git-repo-check`，它不放宽沙箱。
+封装脚本传 `--model` 前用 `codex debug models` 的目录校验 slug 和该模型支持的思考档位（`supported_reasoning_levels`），`astra` 这类简称按 `models.json` 解析成 `gpt-6.2-astra`。非 Git 且未信任的目录会被拒绝（`Not inside a trusted directory`）；确属预期时给脚本加 `--skip-git-check`，对应 `codex exec --skip-git-repo-check`，它不放宽沙箱。
 
 ## 常规任务
 
