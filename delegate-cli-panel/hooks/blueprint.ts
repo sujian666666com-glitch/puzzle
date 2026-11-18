@@ -9,7 +9,7 @@ export const BLUEPRINT_TOOL = 'mcp__delegate-cli-panel__blueprint'
 
 const ACTIVE = new Set(['running', 'preparing'])
 const ENDED_BADLY = new Set(['blocked', 'failed', 'timed_out', 'cancelled'])
-const AGENT_NAMES: Record<string, string> = { codex: 'Codex', pi: 'Pi', cursor: 'Cursor' }
+const AGENT_NAMES: Record<string, string> = { codex: 'Codex', pi: 'Pi', cursor: 'Cursor', agy: 'Antigravity' }
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 // Run failures only the person can clear: directory trust, sign-in, quota. Anything else is
 // the agents' and Claude's to handle, until Claude raises it as a question or a blocker.

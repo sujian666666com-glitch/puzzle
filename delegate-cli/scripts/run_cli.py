@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one Codex/Pi/Cursor job; keep transport status separate from task verification.
+"""Run one delegated CLI job; keep transport status separate from task verification.
 
 Python 3.9+, macOS/Linux/WSL. No API keys or third-party Python packages needed.
 """
@@ -20,9 +20,9 @@ import time
 import shlex
 from progress import Progress, cursor_partial
 
-AGENTS = ('codex', 'pi', 'cursor')
-EXECUTABLES = {'codex': 'codex', 'pi': 'pi', 'cursor': 'cursor-agent'}
-MODEL_LIST_ARGS = {'codex': ['debug', 'models'], 'pi': ['--list-models'], 'cursor': ['models']}
+AGENTS = ('codex', 'pi', 'cursor', 'agy')
+EXECUTABLES = {'codex': 'codex', 'pi': 'pi', 'cursor': 'cursor-agent', 'agy': 'agy'}
+MODEL_LIST_ARGS = {'codex': ['debug', 'models'], 'pi': ['--list-models'], 'cursor': ['models'], 'agy': ['models']}
 SKILL_DIR = Path(__file__).resolve().parent.parent
 EFFORTS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
 SESSION_ID = re.compile(r'[A-Za-z0-9_-]+')
@@ -100,6 +100,11 @@ def list_models(agent, info, cwd):
             parts = line.split()
             if len(parts) >= 2 and parts[0] != 'provider':
                 models[parts[0] + '/' + parts[1]] = None
+    elif agent == 'agy':
+        for line in result.stdout.splitlines():
+            match = re.match(r'^(gemini-\S+)(?:\t+| {2,})\S', line.strip())
+            if match:
+                models[match.group(1)] = None
     else:
         for line in result.stdout.splitlines():
             match = re.match(r'^(\S+) - ', line.strip())
@@ -198,6 +203,8 @@ def resolve_model(args, info, cwd, config):
     plan = {'model': None, 'thinking': thinking, 'model_check': 'not_requested', 'models_text': None}
     requested = args.model or default
     if not requested:
+        if agent == 'agy':
+            raise ValueError('agy requires a Gemini model in models.json defaults or --model')
         return plan  # Keep the CLI's own configured default model.
     try:
         catalog, plan['models_text'] = list_models(agent, info, cwd)
@@ -215,6 +222,8 @@ def resolve_model(args, info, cwd, config):
         plan.update(model=requested, thinking=None)
         return plan
     model = match_model(requested, catalog, aliases)
+    if agent == 'agy' and not (model or requested).startswith('gemini-'):
+        raise ValueError('agy only allows Gemini models. List IDs with: run_cli.py doctor --agent agy --models')
     if agent == 'cursor' and thinking:
         model = cursor_effort(model or requested, thinking, catalog)
         plan['thinking'] = None
@@ -277,6 +286,20 @@ def build_command(args, info, run_dir, previous, plan):
             flag = '--approve' if args.pi_trust == 'approved' else '--no-approve'
             require_flags(info['help'], [flag])
             command += [flag]
+    elif args.agent == 'agy':
+        command += ['--input-format', 'stream-json', '--output-format', 'stream-json',
+                    '--mode', 'plan' if args.access == 'read' else 'accept-edits']
+        if args.access == 'read':
+            # Plan mode only guides the agent. Apply read-job restrictions for this session.
+            denied = ['write_file(*)', 'command(*)', 'unsandboxed(*)', 'mcp(*)', 'execute_url(*)']
+            command += ['--settings', json.dumps({'permissions': {'deny': denied}})]
+        if model:
+            command += ['--model', model]
+        if thinking:
+            command += ['--effort', thinking]
+        if previous:
+            command += ['--conversation', resume_session(previous)]
+        require_flags(info['help'], [flag for flag in command[1:] if flag.startswith('--')])
     else:
         require_flags(info['help'], ['--print', '--output-format', '--mode', '--force', '--resume', '--trust',
                                      '--stream-partial-output'])
@@ -321,6 +344,9 @@ def add_usage(total, usage, agent):
 
     if agent == 'codex':
         cached, parts = num('cached_input_tokens'), (num('input_tokens'), num('output_tokens'), num('reasoning_output_tokens'))
+    elif agent == 'agy':
+        cached = num('cache_read_tokens')
+        parts = (num('input_tokens'), num('output_tokens'), num('thinking_tokens'))
     elif agent == 'cursor':
         cached = num('cacheReadTokens')
         parts = (num('inputTokens') + cached + num('cacheWriteTokens'), num('outputTokens'), 0)
@@ -381,6 +407,17 @@ def parse_cursor(path):
                 last_text = event['result']
             add_usage(usage, event.get('usage'), 'cursor')
     return result, usage or None, last_text
+
+
+def parse_agy(path):
+    counters = {'invalid_event_lines': 0}
+    result = {}
+    for event in read_jsonl(path, counters):
+        if event.get('event') == 'result':
+            result = event['result']
+    usage = {}
+    add_usage(usage, result.get('usage'), 'agy')
+    return result, usage or None, counters['invalid_event_lines']
 
 
 def pi_usage(session_file, offset):
@@ -561,7 +598,12 @@ def run_job(args):
         pi_offset = progress.offsets[str(prior)] = prior.stat().st_size
     out_path = run_dir / ('result.md' if args.agent == 'pi' else 'events.jsonl')
     try:
-        with (run_dir / 'task.md').open('rb') as task, out_path.open('wb') as stdout, \
+        task_path = run_dir / 'task.md'
+        if args.agent == 'agy':
+            task_path = run_dir / 'stdin.jsonl'
+            message = {'event': 'user', 'message': {'content': prompt}}
+            task_path.write_text(json.dumps(message, ensure_ascii=False) + '\n', encoding='utf-8')
+        with task_path.open('rb') as task, out_path.open('wb') as stdout, \
                 (run_dir / 'stderr.log').open('wb') as stderr:
             process = subprocess.Popen(command, cwd=str(cwd), stdin=task, stdout=stdout,
                                        stderr=stderr, start_new_session=True)
@@ -600,6 +642,15 @@ def run_job(args):
             meta['session_id'] = parsed['session_id'] or meta['session_id']
             complete = complete and parsed['turn_completed'] and not parsed['invalid_event_lines']
             cause = parsed['last_error']
+        elif args.agent == 'agy':
+            result, meta['usage'], invalid = parse_agy(out_path)
+            meta['session_id'] = result.get('conversation_id') or meta['session_id']
+            complete = complete and result.get('status') == 'SUCCESS' and not invalid
+            cause = result.get('error')
+            if invalid:
+                cause = 'Invalid JSON in Antigravity event stream'
+            if result.get('response'):
+                (run_dir / 'result.md').write_text(result['response'].rstrip() + '\n', encoding='utf-8')
         elif args.agent == 'cursor':
             parsed, meta['usage'], text = parse_cursor(out_path)
             meta['cursor_events'] = parsed

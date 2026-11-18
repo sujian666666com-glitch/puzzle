@@ -19,7 +19,7 @@ import type { PuzzleActions, PuzzleModel } from './puzzle'
 import { drawBlueprintRow, drawDispatchRow, drawTaskNotice, RUN_CALL, TASK_FLAG } from './rows'
 import type { RowModel } from './rows'
 
-const VERSION = '0.5.0'
+const VERSION = '0.5.1'
 const PANE = 'delegate-agents'
 const TITLE = '子 Agent'
 // One second, so an open live run can tick its status line. Other gaps skip ticks.
@@ -35,10 +35,10 @@ const RESULT_CHARS = 8000
 const TITLE_CHARS = 40
 const STOP_MS = 5000
 const TASK_NOTE = '发送时另附 runner 说明 2 条（记录会话 ID、禁止递归调用其他 AI）'
-const RUN_DIR = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-(codex|pi|cursor)-/
+const RUN_DIR = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-(codex|pi|cursor|agy)-/
 const LINE = /^(\d\d:\d\d:\d\d) (\S+)(?: (.*))?$/
 const ACTIVE = new Set(['running', 'preparing'])
-const AGENTS: Record<string, string> = { codex: 'Codex', pi: 'Pi', cursor: 'Cursor' }
+const AGENTS: Record<string, string> = { codex: 'Codex', pi: 'Pi', cursor: 'Cursor', agy: 'Antigravity' }
 const VERBS: Record<string, string> = {
   read: '读取',
   grep: '搜索',
@@ -122,7 +122,7 @@ const TASK_SCHEMA = {
     id: { type: 'string' },
     pieces: { type: 'array', items: { type: 'string' } },
     role: { type: 'string', description: '实现, 审查, 验收, 排查…' },
-    agent: { type: 'string', enum: ['codex', 'pi', 'cursor'] },
+    agent: { type: 'string', enum: ['codex', 'pi', 'cursor', 'agy'] },
     title: { type: 'string', description: 'The run title, as passed to --title' },
     after: { type: 'array', items: { type: 'string' } },
   },
@@ -814,7 +814,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'delegate-runs',
-      description: '打开子 Agent 面板：delegate-cli 派发的 Codex/Pi/Cursor 运行、结果与实时过程',
+      description: '打开子 Agent 面板：delegate-cli 派发的 Codex/Pi/Cursor/Antigravity 运行、结果与实时过程',
     })
     await $.command.register({
       name: 'puzzle',

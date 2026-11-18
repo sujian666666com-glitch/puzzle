@@ -1,6 +1,7 @@
 {
   "_comment": "run_cli.py 读取：默认模型、简称与中文思考强度映射。启动前会用各 CLI 自带的模型列表校验解析结果；改这里即可调整“老样子”。",
   "defaults": {
+    "agy": {"model": "gemini-3.8-flash-medium"},
     "cursor": {"model": "grok-4.7-medium"}
   },
   "aliases": {

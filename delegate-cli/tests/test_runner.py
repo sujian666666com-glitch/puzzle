@@ -21,7 +21,7 @@ from run_cli import task_identity, parse_cursor
 
 HELP = ('--json --sandbox --output-last-message --config --model --print --session-dir '
         '--session --tools --no-mcp --thinking --approve --no-approve --output-format '
-        '--mode --force --resume --trust --stream-partial-output')
+        '--mode --force --resume --trust --stream-partial-output --input-format --settings --conversation --effort')
 
 # Only the unavailable external CLI discovery/catalog and home directory are substituted.
 # Parsing, argv construction, process management, polling and persistence run unchanged.
@@ -147,6 +147,29 @@ class RunnerTests(unittest.TestCase):
         log = Path(meta['progress_file']).read_text()
         self.assertEqual(log.count('💬'), 2)
         self.assertIn('--stream-partial-output', meta['argv'])
+
+    def test_agy_only_dispatches_gemini(self):
+        _, meta = self.run_offline('agy', ['--dry-run'])
+        self.assertEqual(meta['argv'][meta['argv'].index('--model') + 1], 'gemini-3.8-flash-medium')
+        for model in ('claude-sonnet-4-6', 'gpt-oss-120b-medium'):
+            run = subprocess.run(self.command('agy', ['--model', model]), env=self.env,
+                                 capture_output=True, text=True)
+            self.assertEqual(run.returncode, 2)
+            self.assertIn('only allows Gemini', json.loads(run.stdout)['error'])
+
+    def test_agy_partial_response_with_terminal_error(self):
+        events = self.root / 'events.jsonl'
+        events.write_text(json.dumps({'event': 'result', 'result': {
+            'status': 'ERROR', 'response': 'Partial answer', 'error': 'turn interrupted',
+            'conversation_id': 'test-session'}}) + '\n')
+        self.env['TEST_FIXTURE'] = str(events)
+        run = subprocess.run(self.command('agy'), env=self.env, capture_output=True, text=True)
+        self.assertEqual(run.returncode, 1)
+        meta = json.loads(run.stdout.splitlines()[-1])
+        self.assertEqual(meta['status'], 'failed')
+        self.assertEqual(meta['error'], 'turn interrupted')
+        self.assertEqual(meta['session_id'], 'test-session')
+        self.assertEqual(Path(meta['result_file']).read_text().strip(), 'Partial answer')
 
     def test_quiet(self):
         output, meta = self.run_offline(extra=['--quiet', '--title', '指定'])

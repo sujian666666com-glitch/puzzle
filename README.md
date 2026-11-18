@@ -4,7 +4,7 @@
 
 | 目录 | 类型 | 作用 |
 |---|---|---|
-| `delegate-cli/` | Skill | 让 Claude 调度 Codex、Pi、Cursor：派发、续接、实时进度、验收 |
+| `delegate-cli/` | Skill | 让 Claude 调度 Codex、Pi、Cursor、Antigravity：派发、续接、实时进度、验收 |
 | `delegate-cli-panel/` | 插件（函数钩子 mod） | 桌面 App 右侧的「子 Agent」和「需求拼图」两个面板：查看委派的任务、结果、实时过程，以及需求由哪些块组成、哪里要你处理 |
 
 两者只通过 `~/.claude/cli-runs/` 里的运行记录衔接：skill 单独可用，面板是可选的界面。暂时分开存放，以后需要一键安装时再合成一个插件。

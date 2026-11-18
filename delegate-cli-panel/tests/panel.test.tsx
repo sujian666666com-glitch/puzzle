@@ -225,7 +225,7 @@ test("lists this session's runs as cards, opens itself, and shows a run's live l
     expect(await ui.find({ type: 'Text', text: /可能已中断/ })).toBeDefined()
     expect(await ui.find({ key: OTHER })).toBeUndefined()
     expect(await ui.find({ key: 'group-blog' })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: /delegate-cli-panel 0\.5\.0/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /delegate-cli-panel 0\.5\.1/ })).toBeDefined()
 
     await ui.press({ key: 'scope-all' })
     expect((await ui.find({ key: `card-${OTHER}` }))?.text).toMatch(/Codex · gpt-6-astra \/ medium · 可写 · 16:56 · 5 分 00 秒 · 31\.9k tok/)
@@ -246,6 +246,17 @@ test("lists this session's runs as cards, opens itself, and shows a run's live l
     expect(await ui.find({ key: LIVE })).toBeDefined()
     await ui.unmount()
   }
+})
+
+test('shows Antigravity runs in the session panel', async ($, on) => {
+  const run = '20261102-171500-agy-live0001'
+  const clock = mock.clock(on, { now: NOW })
+  world(on, [], [], true, [run], { meta: { [run]: { ...META[LIVE], agent: 'agy', model: 'gemini-test' } } })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ key: `card-${run}` }))?.text).toMatch(/Antigravity · gemini-test/)
+  await ui.unmount()
 })
 
 test('a finished log reads as a timeline: grouped reads, failures, messages, no stale heartbeat', async ($, on) => {

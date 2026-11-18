@@ -32,7 +32,7 @@ const VIEWS: [PuzzleView, string][] = [
   ['list', '清单'],
   ['tree', '关系'],
 ]
-const AGENTS: Record<string, string> = { codex: 'Codex', pi: 'Pi', cursor: 'Cursor' }
+const AGENTS: Record<string, string> = { codex: 'Codex', pi: 'Pi', cursor: 'Cursor', agy: 'Antigravity' }
 const ENDED: Record<string, string> = {
   process_succeeded: '已结束',
   failed: '失败',

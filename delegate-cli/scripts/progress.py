@@ -156,7 +156,7 @@ class Progress:
     def poll(self):
         root = Path(self.meta['run_dir'])
         agent = self.meta['agent']
-        if agent in ('codex', 'cursor'):
+        if agent in ('codex', 'cursor', 'agy'):
             paths = [root / 'events.jsonl']
         else:
             paths = ([Path(self.meta['session_file'])] if self.meta.get('session_file')
@@ -169,6 +169,8 @@ class Progress:
                         continue
                     if agent == 'codex':
                         self.codex(e)
+                    elif agent == 'agy':
+                        self.agy(e)
                     elif agent == 'cursor':
                         self.cursor(e)
                     else:
@@ -220,6 +222,26 @@ class Progress:
             self.write('! ' + clean(e.get('error', e.get('message', kind))))
         elif kind == 'turn.completed':
             self.write('● 本轮完成；待主控验收')
+
+    def agy(self, event):
+        if event.get('event') == 'init':
+            self.session(event.get('conversation_id'))
+        elif event.get('event') == 'step_update':
+            step = event['step_update']
+            if step.get('step_type') == 'agent_response':
+                self.meta['live_text'] += step.get('text_delta', '')
+                self.activity('writing', '正在写回复')
+                if step.get('state') == 'DONE':
+                    self.message(self.meta['live_text'])
+                    self.meta['live_text'] = ''
+                    self.idle()
+            elif step.get('step_type') == 'tool':
+                key = step['step_index']
+                info = step.get('tool_info') or {}
+                if key not in self.tools:
+                    self.started(key, step.get('tool_name', 'tool'), self.describe(info.get('parameters') or {}))
+                if step.get('state') == 'DONE':
+                    self.finished(key, not info.get('error'))
 
     def cursor(self, e):
         kind = e.get('type')

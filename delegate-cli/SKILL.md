@@ -1,9 +1,9 @@
 ---
 name: delegate-cli
-description: 让 Claude Code 通过本机 Codex CLI、Pi coding agent 与 Cursor CLI 委派开发、排查、测试、代码审查及浏览器/桌面验收任务，按需并行、续接指定会话并验收结果。用户要求调用 Codex/Pi/Cursor、让多个编码 Agent 协作、分担任务或交叉审查时使用；简单任务和纯概念问答无需委派。
+description: 让 Claude Code 通过本机 Codex CLI、Pi coding agent、Cursor CLI 与 Antigravity CLI（agy）委派开发、排查、测试、代码审查及浏览器/桌面验收任务，按需并行、续接指定会话并验收结果。用户要求调用 Codex/Pi/Cursor/agy、让多个编码 Agent 协作、分担任务或交叉审查时使用；简单任务和纯概念问答无需委派。
 ---
 
-# Claude 调度 Codex、Pi 与 Cursor
+# Claude 调度 Codex、Pi、Cursor 与 Antigravity
 
 担任主控：理解用户目标、分工、收回结果、整合并验收。调用真实 CLI，不把自己推测的答案冒充外部 Agent 的结果。遵守用户已给出的范围和授权；子任务不增加原任务权限。
 
@@ -24,7 +24,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" doctor --cwd "/绝对/项目路
 
 ## 2. 分配任务
 
-先给一句简短分工，然后执行。只拆有明确产物、可独立验证的子任务；小改动自己做。三家都能开发、测试、审查，按实际模型选择，不预设谁弱。
+先给一句简短分工，然后执行。只拆有明确产物、可独立验证的子任务；小改动自己做。各渠道都能开发、测试、审查，按实际模型选择，不预设谁弱。
 
 | 场景 | 执行方式 |
 |---|---|
@@ -85,15 +85,16 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" run \
   --title "审查 runner 改动" --task T3 --model astra --thinking 中
 ```
 
-`--agent` 取 `codex`、`pi`、`cursor`；`--access read|write`。任务文件必须已存在。
+`--agent` 取 `codex`、`pi`、`cursor`、`agy`；`--access read|write`。任务文件必须已存在。
 
 - **任务名**：每次派发都传 `--title`，10～20 字说清做什么（如“审查 runner 改动”“补面板停止按钮”）。它就是面板卡片标题和后台任务名，不传时取交接里「目标：」那一行。
 - **拼图任务**：有拼图时每次派发都传 `--task`（见第 2 节），面板据此把这次运行挂到对应的块上。续接不传时沿用上次的任务；ID 不合法会在启动前 `blocked`，这行 JSON 里也带着 `task`。
-- **模型**：用户说的简称原样传，脚本按 skill 根目录的 `models.json` 解析，并在启动前用 CLI 自带的模型列表校验（`astra`→`gpt-6.2-astra`，`flash`→`deepseek/deepseek-flash`，`grok4.7`+`中`→`grok-4.7-medium`）。写错会立即 `blocked` 并给出候选，不会白跑。不传时用 `models.json` 的 `defaults`（目前只给 Cursor 配了 `grok-4.7-medium`），再没有就用 CLI 自己配置的默认模型；用户的"老样子"写进 `models.json`，三家都生效。Cursor 的思考档按同一模型族换档（没有的档位会报错并列出可用档），带方括号参数的 ID 原样放行。
+- **模型**：用户说的简称原样传，脚本按 skill 根目录的 `models.json` 解析，并在启动前用 CLI 自带的模型列表校验（`astra`→`gpt-6.2-astra`，`flash`→`deepseek/deepseek-flash`，`grok4.7`+`中`→`grok-4.7-medium`）。写错会立即 `blocked` 并给出候选，不会白跑。不传时用 `models.json` 的 `defaults`（Cursor 默认 `grok-4.7-medium`，agy 默认 `gemini-3.8-flash-medium`），再没有就用 CLI 自己配置的默认模型；用户的"老样子"写进 `models.json`，各渠道都生效。Cursor 的思考档按同一模型族换档（没有的档位会报错并列出可用档），带方括号参数的 ID 原样放行。
+- **Antigravity**：用户点名 agy 或 Antigravity 时传 `--agent agy`。此渠道仅允许 Gemini，默认使用 `gemini-3.8-flash-medium`，支持 `--model` 和 `--thinking`。read 使用 plan 并通过本次会话的权限规则禁止文件写入、终端命令、MCP 和网页执行；write 使用 accept-edits，命令执行受本机权限配置约束。续接使用原运行记录中的 conversation ID。参见 [Google 官方 headless 文档](https://antigravity.google/docs/cli/headless/)。
 - **Cursor**：read 用 `--mode ask`，write 用 `--force`（执行命令，且隐含信任目录）。Cursor 按具体目录记信任，新 worktree、临时副本都算新目录，只读任务进去会 `blocked`。目录在任务范围内（用户这次让你处理的项目，以及你从它建的 worktree、临时副本）时直接加 `--cursor-trust approved`，不用问用户；漏加而受阻时，加上后重跑同一任务，不要因此改派别的 Agent。范围外的目录（例如外部来源的代码）先问用户。
 - **Pi**：read 只选读取工具并在支持时关闭内置 MCP，保留扩展；尚未信任的项目资源用 `--pi-trust existing|skip|approved`（默认沿用已有信任；`skip` 对应 `--no-approve`，`approved` 对应一次性 `--approve`）。
 - **非 Git 目录**：Codex 默认拒绝；确属预期时加 `--skip-git-check`（只对 Codex 有效，用在其他 Agent 上会直接报错）。
-- 每次运行生成独立目录（默认 `~/.claude/cli-runs/`，`--run-root` 可改），保留 `task.md`、`handoff.md`、`run.json`、`result.md`、`stderr.log`、`progress.log` 和 CLI 帮助（解析过模型时另存 `models.txt`）；Codex/Cursor 另存 `events.jsonl`，Pi 保留会话文件。不要把日志提交进业务仓库。
+- 每次运行生成独立目录（默认 `~/.claude/cli-runs/`，`--run-root` 可改），保留 `task.md`、`handoff.md`、`run.json`、`result.md`、`stderr.log`、`progress.log` 和 CLI 帮助（解析过模型时另存 `models.txt`）；Codex/Cursor/agy 另存 `events.jsonl`，Pi 保留会话文件。不要把日志提交进业务仓库。
 
 续接时给出该任务完成后的精确 `run.json`，Agent 和工作目录必须相同：
 
@@ -111,7 +112,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/run_cli.py" run \
 - 用后台 Bash 派发，description 写成「Agent：任务名」，任务名与 `--title` 相同（如“Cursor：审查 runner 改动”）：Background tasks 按它列出任务。点进去是 runner 的实时输出：首行 JSON（`run_file`、`watch_command`），接着「── 任务：<任务名> ──」和交接全文（不含 runner 附注），然后逐行进度，末行最终 JSON。
 - 派发后在对话里贴一张派发卡片：一张小表，列出任务名、Agent、模型、读写、工作目录、完成标准；不贴交接全文（全文在面板「任务」页和 Background tasks 开头）。再附一句提示和 `watch_command` 方便终端跟随，命令用本次真实路径，不硬编码用户名或项目名。
 - 有拼图时，派发卡片只写一行：「派发：<任务名> → <块名>（Agent · 模型 · 读写）」。完成标准已经是块的验收条件，进度在「需求拼图」面板里看（`/puzzle` 打开）；需要终端跟随时再附 `watch_command`。对话里的拼图调用、派发和完成通知，面板会各压成一行，悬停能点亮对应的块。
-- 装了 `delegate-cli-panel` 插件时，底部状态栏显示运行中的子 Agent，`/delegate-runs` 打开「子 Agent」面板（pane 是否显示由 App 决定）。卡片以任务名命名，副信息是 Agent · 模型 · 读写 · 派发时刻 · 耗时 · token；详情分「任务 / 过程 / 结果」三页。运行中底部有实时状态行（正在思考 / 正在执行 xx / 正在写回复 / 等待模型 + 秒数；只有 Cursor 有思考与逐字事件，Codex 和 Pi 只在执行工具与等待模型之间切换），Cursor 正在写的回复以“输入中”气泡逐字出现；可用「停止」「追问」处理跑偏或需要补要求的运行。
+- 装了 `delegate-cli-panel` 插件时，底部状态栏显示运行中的子 Agent，`/delegate-runs` 打开「子 Agent」面板（pane 是否显示由 App 决定）。卡片以任务名命名，副信息是 Agent · 模型 · 读写 · 派发时刻 · 耗时 · token；详情分「任务 / 过程 / 结果」三页。运行中底部有实时状态行（正在思考 / 正在执行 xx / 正在写回复 / 等待模型 + 秒数；Cursor 有思考与逐字事件，agy 有工具与逐字事件，Codex 和 Pi 只在执行工具与等待模型之间切换），Cursor 和 agy 正在写的回复以“输入中”气泡逐字出现；可用「停止」「追问」处理跑偏或需要补要求的运行。
 - 后台 Bash 结束时 Claude 会收到完成通知：等通知再收结果，不要轮询，也不要整份读取后台输出（那是给人看的进度流）。最终状态读 `run.json`，或只取输出的最后一行；确需中途判断时用 `watch --once` 读一次快照。前台短任务可加 `--quiet`，只输出首尾两行 JSON。
 - `progress.log` 展示工具调用（每次一行；失败、退出码非 0、超过 3 秒的另记结果）、文件改动、Agent 消息、错误、会话 ID 和最终用量。无日志 60 秒会提示安静时长，不能据此判定卡死或自动重试。runner 每分钟至少写一次心跳，面板把超过 3 分钟没写日志的 running 运行标为"可能已中断"（runner 可能被强杀），需核实进程。面板只扫描默认目录 `~/.claude/cli-runs/` 里最近 7 天的运行；用 `--run-root` 改了目录的运行只能用 `watch` 看。
 - 默认日志不含私有推理。不要擅自启动终端窗口。

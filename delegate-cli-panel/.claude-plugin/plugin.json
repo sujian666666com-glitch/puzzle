@@ -1,6 +1,6 @@
 {
   "name": "delegate-cli-panel",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "子 Agent 与需求拼图两个面板：按任务名列出 delegate-cli 派发的运行，查看任务、实时过程与结果，可停止或追问；需求拼图显示委派的需求由哪些块组成、谁在做、哪里要你处理",
   "types": "./types/index.d.ts"
 }
